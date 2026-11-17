@@ -28,7 +28,8 @@ N_PATIENTS = 2000
 T_HOURS = 48
 P_MISSING = 0.1
 TAU, KAPPA = 2.0, 0.05
-ALPHA, BETA, GAMMA, DELTA = 0.1, 8.0, 6.0, 4.0
+ALPHA, BETA, GAMMA, DELTA = 0.1, 2.0, 6.0, 4.0   # untreated MAP settles at m_base - 20*s
+P_EXPLORE = 0.3
 
 OUT = Path(__file__).resolve().parent.parent / "outputs"
 
@@ -79,12 +80,16 @@ def clinician_policy(map_seen, hours_since_fluid, rng):
     return u, f
 
 
-def random_policy(map_seen, hours_since_fluid, rng):
-    """Ignores the patient: u is 0 or 1 with prob 0.5; a 0.5 L bolus with prob 0.25."""
+def explore_policy(map_seen, hours_since_fluid, rng):
+    """The clinician policy, but each hour with prob P_EXPLORE the whole action is
+    replaced by a random one: u is 0 or 1 with prob 0.5; a 0.5 L bolus with prob 0.25.
+    The random hours break the link between MAP and treatment."""
     n = len(map_seen)
-    u = (rng.random(n) < 0.5).astype(float)
-    f = 0.5 * (rng.random(n) < 0.25)
-    return u, f
+    u, f = clinician_policy(map_seen, hours_since_fluid, rng)
+    explore = rng.random(n) < P_EXPLORE
+    u_rand = (rng.random(n) < 0.5).astype(float)
+    f_rand = 0.5 * (rng.random(n) < 0.25)
+    return np.where(explore, u_rand, u), np.where(explore, f_rand, f)
 
 
 # ---------------------------------------------------------------- simulate
@@ -159,7 +164,7 @@ def plot_patients(d, title, path, n_show=4):
 
 if __name__ == "__main__":
     (OUT / "figures").mkdir(parents=True, exist_ok=True)
-    for name, policy, seed in [("policy", clinician_policy, 0), ("random", random_policy, 1)]:
+    for name, policy, seed in [("policy", clinician_policy, 0), ("explore", explore_policy, 1)]:
         d = simulate(policy, seed=seed)
         np.savez_compressed(OUT / f"sim_{name}.npz", **d)
         summarise(name, d)
