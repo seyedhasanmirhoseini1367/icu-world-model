@@ -28,7 +28,7 @@ N_PATIENTS = 2000
 T_HOURS = 48
 P_MISSING = 0.1
 TAU, KAPPA = 2.0, 0.05
-ALPHA, BETA, GAMMA, DELTA = 0.1, 3.0, 6.0, 4.0   # untreated MAP settles at m_base - 30*s
+ALPHA, BETA, GAMMA, DELTA = 0.1, 5.0, 6.0, 4.0   # untreated MAP settles at m_base - 50*s
 P_EXPLORE = 0.3
 
 OUT = Path(__file__).resolve().parent.parent / "outputs"
