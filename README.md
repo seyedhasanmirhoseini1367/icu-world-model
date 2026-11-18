@@ -15,10 +15,18 @@ icu-world-model/
     model.py       Stage 3  token embedding, causal transformer, prior/posterior/decoder
     train.py       Stage 4  masked Gaussian NLL + beta * KL (free bits), loss plots
     rollout.py     Stage 5  imagination from the prior; u=0 vs u=1 causal test
-  notebooks/       exploration and the causal-test notebook
-  outputs/         generated datasets, checkpoints, figures (not versioned)
+    ensemble.py    Stage 6  5 seeds per dataset; epistemic vs aleatoric spread
+    mimic_data.py  Stage 7  same tensors from real MIMIC-IV icu tables
+  notebooks/
+    causal_test.ipynb   Stage 5 results
+    kaggle_mimic.ipynb  Stage 7: extraction + training on the full MIMIC-IV tables
+  outputs/         generated data and checkpoints (local only); figures/ is versioned
+  LEARNING.md      what each stage does and teaches, for a first-time reader
   requirements.txt pinned package versions
 ```
+
+Reproduce the simulated results in order:
+`simulator.py`, `train.py`, `rollout.py`, `ensemble.py train`, `ensemble.py test`.
 
 ## Setup
 

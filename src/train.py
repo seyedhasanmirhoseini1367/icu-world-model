@@ -52,13 +52,16 @@ def gaussian_kl(mu_q, ls_q, mu_p, ls_p):
 
 
 def compute_loss(out):
+    valid = out["valid_target"]                                                # (B, T-1), all 1 for simulated data
+    n = valid.sum()                                                            # number of real predicted hours
     nll = gaussian_nll(out["x_target"], out["dec_mu"], out["dec_log_sigma"])   # (B, T-1, V)
-    recon = (nll * out["mask_target"]).sum(-1).mean()                          # scalar, nats/hour
+    recon = ((nll * out["mask_target"]).sum(-1) * valid).sum() / n             # scalar, nats/hour
     kl_dims = gaussian_kl(out["post_mu"], out["post_log_sigma"],
                           out["prior_mu"], out["prior_log_sigma"])             # (B, T-1, Z)
-    kl = kl_dims.sum(-1).mean()                                                # scalar, nats/hour
+    kl_dims = kl_dims * valid[..., None]                                       # padding contributes 0
+    kl = kl_dims.sum(-1).sum() / n                                             # scalar, nats/hour
     loss = recon + BETA_KL * torch.clamp(kl, min=FREE_BITS)                    # scalar
-    return loss, recon, kl, kl_dims.mean(dim=(0, 1))                           # last: (Z,)
+    return loss, recon, kl, kl_dims.sum(dim=(0, 1)) / n                        # last: (Z,)
 
 
 # ---------------------------------------------------------------- training
@@ -159,7 +162,8 @@ def one_step_map_error(model, loader, stats):
 # ---------------------------------------------------------------- plots
 
 def plot_curves(histories):
-    fig, axes = plt.subplots(2, 3, figsize=(14, 7), sharex="row")
+    fig, axes = plt.subplots(len(histories), 3, figsize=(14, 3.5 * len(histories)),
+                             sharex="row", squeeze=False)
     for row, (name, hist) in enumerate(histories.items()):
         ep = [h["epoch"] for h in hist]
         for col, key in enumerate(["loss", "recon", "kl"]):
@@ -178,7 +182,9 @@ def plot_curves(histories):
 
 
 def plot_kl_dims(kl_dims):
-    fig, axes = plt.subplots(1, 2, figsize=(10, 3.5), sharey=True)
+    fig, axes = plt.subplots(1, len(kl_dims), figsize=(5 * len(kl_dims), 3.5), sharey=True,
+                             squeeze=False)
+    axes = axes[0]
     for ax, (name, kd) in zip(axes, kl_dims.items()):
         ax.bar(range(len(kd)), kd, color=["tab:blue" if k > USED_DIM_NATS else "0.7" for k in kd])
         ax.axhline(USED_DIM_NATS, ls="--", color="tab:red", lw=0.8, label=f"{USED_DIM_NATS} nats")

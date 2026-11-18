@@ -50,21 +50,25 @@ def hours_since_observed(mask):
 
 
 class ICUSequences(Dataset):
-    """One item = one patient's whole 48-hour sequence."""
+    """One item = one patient's whole 48-hour sequence.
+    valid (N, T) marks real hours; simulated stays are always 48 h long (all True),
+    real ICU stays can be shorter and are padded at the end (Stage 7)."""
 
-    def __init__(self, x, mask, delta, a, idx):
-        self.x = torch.tensor(x, dtype=torch.float32)          # (N, T, 2)
-        self.mask = torch.tensor(mask, dtype=torch.float32)    # (N, T, 2)
-        self.delta = torch.tensor(delta, dtype=torch.float32)  # (N, T, 2)
-        self.a = torch.tensor(a, dtype=torch.float32)          # (N, T, 2)
+    def __init__(self, x, mask, delta, a, idx, valid=None):
+        self.x = torch.tensor(x, dtype=torch.float32)          # (N, T, V)
+        self.mask = torch.tensor(mask, dtype=torch.float32)    # (N, T, V)
+        self.delta = torch.tensor(delta, dtype=torch.float32)  # (N, T, V)
+        self.a = torch.tensor(a, dtype=torch.float32)          # (N, T, A)
         self.idx = torch.tensor(idx)                           # (N,)
+        self.valid = (torch.ones(self.x.shape[:2]) if valid is None
+                      else torch.tensor(valid, dtype=torch.float32))   # (N, T)
 
     def __len__(self):
         return len(self.idx)
 
     def __getitem__(self, i):
         return dict(x=self.x[i], mask=self.mask[i], delta=self.delta[i],
-                    a=self.a[i], idx=self.idx[i])
+                    a=self.a[i], idx=self.idx[i], valid=self.valid[i])
 
 
 def norm_stats():

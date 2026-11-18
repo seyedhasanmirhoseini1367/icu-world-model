@@ -95,10 +95,14 @@ class WorldModel(nn.Module):
         z = self.sample(post_mu, post_ls)                                    # (B, T-1, Z)
         dec_mu, dec_ls = self.decoder(torch.cat([z, h_now], -1))             # (B, T-1, V) each
 
+        # valid (B, T): 1 for real hours, 0 for padding after a short stay (real data only).
+        # Padding sits at the end, so causal attention never lets a real hour see it.
+        valid = batch.get("valid", torch.ones(B, T))
         out = dict(h=h, prior_mu=prior_mu, prior_log_sigma=prior_ls,
                    post_mu=post_mu, post_log_sigma=post_ls, z=z,
                    dec_mu=dec_mu, dec_log_sigma=dec_ls,
-                   x_target=x_next, mask_target=mask_next)
+                   x_target=x_next, mask_target=mask_next,
+                   valid_target=valid[:, 1:])                                # (B, T-1)
         if show:
             rows = [("x, mask, delta, a  (input)", x), ("a_prev = a shifted right", a_prev),
                     ("hours", hours),

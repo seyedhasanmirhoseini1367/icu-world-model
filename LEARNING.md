@@ -320,3 +320,60 @@ epistemic spread (0.64) and an error of 9.1 mmHg, while `u=1` has the highest sp
 - On real data, where there is no simulator to check against, a narrow ensemble band
   must never be read as "the model knows". The data's coverage of the action you ask
   about has to be checked separately.
+
+---
+
+## Stage 7 - Preparing real ICU data (MIMIC-IV)
+
+**What we did.** [`src/mimic_data.py`](src/mimic_data.py) turns the real MIMIC-IV ICU
+tables into exactly the tensors the simulator gave us (`x`, `mask`, `delta`, `a`), so
+the same model and training loop run unchanged. **MIMIC-IV** is a public, de-identified
+database of patients from one Boston hospital; we use four of its ICU tables:
+`icustays` (admission and discharge times), `chartevents` (bedside measurements),
+`inputevents` (drugs and fluids) and `procedureevents` (procedures such as ventilation).
+
+Each ICU stay becomes 48 hourly steps from ICU admission:
+
+- **5 vitals**: heart rate, respiratory rate, SpO2 (oxygen saturation), MAP (from the
+  arterial line if there is one, otherwise the blood-pressure cuff) and temperature
+  (Celsius, or Fahrenheit converted). Each hour gets the mean of its readings;
+  impossible single readings (e.g. heart rate 900) are dropped first.
+- **3 actions**:
+  - *Vasopressor dose* as a **norepinephrine equivalent**: different vasopressors
+    converted to the dose of norepinephrine with a similar effect (epinephrine x1,
+    phenylephrine x0.1, dopamine x0.01, vasopressin 2.5 per unit/min). Infusions are
+    recorded as "rate R from start to end", so each hour gets the **time-weighted**
+    average: an infusion running for the second half of an hour counts half.
+  - *Fluid bolus* in litres: saline or Ringer's lactate, but only orders in the
+    "IV fluid bolus" category. In the local sample, most saline rows (848 of 1,412) are
+    small volumes used to carry drugs, not boluses.
+  - *Invasive ventilation*: the fraction of the hour spent on a ventilator.
+- **valid**: real stays are not all 48 hours long. Shorter stays are padded at the end,
+  and the loss ignores padded hours. We checked that a stay padded after 30 hours gives
+  exactly the same loss as the same stay cut to 30 hours.
+
+**How it was tested.** The local `sample/` folder is incomplete (its event tables are
+random rows from all of MIMIC, not complete stays), so it can only show that the code
+runs: 1,386 stays, tensors of shape `(16, 48, 5)` and `(16, 48, 3)` per batch of 16. To
+check the logic itself, a hand-made stay with known answers was run through it: a
+norepinephrine infusion from 0:30 to 2:30 at 0.1 gives 0.05, 0.1, 0.05 in hours 0-2;
+ventilation from 6:15 to 8:00 gives 0.75 then 1.0; 98.6 F becomes 37.0 C. That test
+found one bug (an impossible reading spoiled its whole hour), now fixed.
+
+[`notebooks/kaggle_mimic.ipynb`](notebooks/kaggle_mimic.ipynb) runs the extraction and
+the Stage 4 training on the full tables on Kaggle. It ran end to end locally on the
+sample for 2 epochs; it has not been run on the full data yet.
+
+**What it teaches.**
+- **Most of the work in real data is deciding what an "action" is.** The simulator gave
+  us `u` and `f` for free. In MIMIC we had to choose units, convert between drugs,
+  spread infusions over hours and tell a bolus from a drug carrier. Each choice changes
+  what the model can learn, and none of them is in the model code.
+- **Real missingness is not random.** In the simulator every vital was missing 10% of
+  the time by coin flip. In real ICU data, temperature is measured about every 4 hours
+  and an arterial line exists only for sicker patients, so *whether* something is
+  measured says something about the patient. The `mask` and `delta` inputs let the model
+  use that, but they also let it learn hospital habits rather than physiology.
+- **The real clinician policy is the policy dataset, not the explore dataset.** There
+  is no random exploration in MIMIC. Everything Stages 5 and 6 showed about missing
+  positivity applies, and there is no simulator to tell us the true effect.
