@@ -115,7 +115,11 @@ def _wandb_start(tag, seed, loaders, model_kwargs, extra_config):
                   **{**model_defaults, **(model_kwargs or {})},
                   **{f"n_{k}_stays": len(dl.dataset) for k, dl in loaders.items()},
                   **(extra_config or {}))
-    WANDB_RUN = wandb.init(project="icu-world-model", name=tag, config=config)
+    try:
+        WANDB_RUN = wandb.init(project="icu-world-model", name=tag, config=config)
+    except Exception as e:                       # e.g. a rejected key: train anyway, unlogged
+        print(f"W&B init failed ({type(e).__name__}); continuing without W&B")
+        WANDB_RUN = None
     return WANDB_RUN
 
 
