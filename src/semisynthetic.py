@@ -168,3 +168,124 @@ def report(r):
     lines.append("ablation on the semi-synthetic model:")
     lines.append(ablate_mimic.report(r["ablation_semisynthetic"]))
     return "\n".join(lines)
+
+
+# ---------------------------------------------------------------- Stage 10b: detection threshold
+
+def recovered_stats(per_semi, per_real, injected):
+    """Pair moments by (row, t) and summarise the recovered effect (semi minus real) per hour.
+    Clearly distinguishable at an hour = the 10-90% range across patients lies above 0."""
+    keys = [k for k in per_semi if k in per_real]
+    if not keys:
+        return dict(n_paired=0, injected=injected)
+    rec = torch.stack([per_semi[k] - per_real[k] for k in keys])            # (M, H)
+    mean = rec.mean(0)
+    p10, p90 = rec.quantile(0.1, dim=0), rec.quantile(0.9, dim=0)
+    return dict(n_paired=len(keys), injected=injected, recovered_mean=mean.tolist(),
+                recovered_p10=p10.tolist(), recovered_p90=p90.tolist(),
+                recovered_share=[m / i for m, i in zip(mean.tolist(), injected)],
+                share_moments_positive=(rec > 0).float().mean(0).tolist(),
+                clearly_distinguishable=(p10 > 0).tolist())
+
+
+def plot_threshold(res, path):
+    ks = res["k_values"]
+    hours = [0] + res["horizons"]
+    fig, axes = plt.subplots(1, len(ks), figsize=(5 * len(ks), 4.2), squeeze=False)
+    for ax, k in zip(axes[0], ks):
+        r = res["by_k"][str(k)]
+        ax.plot(hours, [0] + r["injected"], "k--", lw=2, label="injected")
+        ax.fill_between(hours, [0] + r["recovered_p10"], [0] + r["recovered_p90"], alpha=0.25,
+                        label="recovered, 10-90% across patients")
+        ax.plot(hours, [0] + r["recovered_mean"], "o-", label="recovered, mean")
+        ax.axhline(0, color="0.5", lw=0.8)
+        ax.set_title(f"K = {k} mmHg per mcg/kg/min")
+        ax.set_xlabel("hours after the decision hour")
+        ax.set_ylabel("MAP difference, NEE 0.1 minus 0 (mmHg)")
+        ax.legend(fontsize=8)
+    fig.suptitle(f"Detection threshold: recovered vs injected effect (n = {res['n_moments']} moments)")
+    fig.tight_layout()
+    fig.savefig(path, dpi=110)
+    plt.close(fig)
+
+
+def run_stage10b(icu_dir, real_model, k100_model, work, device="cpu", tmp="/tmp", ks_to_train=(10, 30),
+                 max_stays=0, max_epochs=None, time_budget_h=5.0):
+    """Train the same model on K = 10 and 30 (same seed, hyperparameters), reuse the K = 100 model,
+    and compare the recovered effect on the same moments, paired per moment."""
+    work, tmp = Path(work), Path(tmp)
+    (work / "figures").mkdir(parents=True, exist_ok=True)
+    tmp.mkdir(parents=True, exist_ok=True)
+    real = mimic_data.extract(icu_dir, max_stays)
+    real_npz = tmp / "mimic_real.npz"
+    np.savez_compressed(real_npz, **real)
+    clips = mimic_data.clip_counts(real_npz)
+    sets, stats = mimic_data.load_splits_mimic(real_npz)
+    b_real = imagine_mimic.part_b(load_model(real_model, device), sets["test"], stats, device, keep_per_moment=True)
+    hours = b_real["horizons"]
+
+    T.OUT, T.FIG, T.DEVICE, T.TIME_BUDGET_S = work, work / "figures", device, time_budget_h * 3600
+    if max_epochs:
+        T.MAX_EPOCHS = max_epochs
+    by_k, training = {}, {}
+    for k in sorted(set(ks_to_train) | {100}):
+        npz = tmp / f"mimic_semisyn_k{int(k)}.npz"
+        np.savez_compressed(npz, **inject(real, k=float(k)))
+        if k in ks_to_train:
+            loaders, _ = mimic_data.make_loaders_mimic(npz, batch_size=T.BATCH_SIZE)
+            _, history, _ = T.train(
+                f"mimic_semisyn_k{int(k)}", loaders=loaders,
+                model_kwargs=dict(n_vitals=len(mimic_data.VITALS), n_actions=len(mimic_data.ACTIONS)),
+                wandb_config=dict(semisynthetic=True, injected_k_mmhg_per_dose=float(k), injected_tau_h=TAU_H,
+                                  nee_clip_mcg_kg_min=mimic_data.NEE_CLIP,
+                                  fluid_clip_l_per_hour=mimic_data.FLUID_CLIP_L, **clips))
+            best = min(history, key=lambda h: h["val"]["loss"])
+            training[str(k)] = dict(best_epoch=best["epoch"], epochs=len(history),
+                                    seconds_per_epoch_median=float(np.median([h["seconds"] for h in history])),
+                                    val_recon=best["val"]["recon"], val_kl=best["val"]["kl"])
+            model_path = work / f"model_mimic_semisyn_k{int(k)}.pt"
+        else:
+            model_path = k100_model
+        k_sets, k_stats = mimic_data.load_splits_mimic(npz)
+        b = imagine_mimic.part_b(load_model(model_path, device), k_sets["test"], k_stats, device, keep_per_moment=True)
+        injected = injected_effect(imagine_mimic.DOSE, hours, k=float(k))
+        r = recovered_stats(b["_per_moment"], b_real["_per_moment"], injected)
+        r.update(n_moments=b["n_moments"], learned_mean=b["mean_diff"])
+        by_k[str(k)] = r
+        if k in ks_to_train:
+            summary = {f"effect/recovered_{h}h": r["recovered_mean"][h - 1] for h in (1, 3, 6)}
+            summary.update({f"effect/injected_{h}h": injected[h - 1] for h in (1, 3, 6)})
+            T.finish_wandb(dict(best_epoch=training[str(k)]["best_epoch"], **summary, **clips))
+        npz.unlink()
+
+    b_real.pop("_per_moment")
+    result = dict(k_values=sorted(int(k) for k in by_k), dose=imagine_mimic.DOSE, injected_tau_h=TAU_H,
+                  horizons=hours, n_moments=b_real["n_moments"], real_model_mean=b_real["mean_diff"],
+                  by_k=by_k, training=training, clipped=clips)
+    smallest = [k for k in result["k_values"]
+                if all(by_k[str(k)]["clearly_distinguishable"][h - 1] for h in (1, 3, 6))]
+    result["smallest_k_clearly_distinguishable_at_1_3_6h"] = min(smallest) if smallest else None
+    (work / "stage10b_metrics.json").write_text(json.dumps(result, indent=2))
+    plot_threshold(result, work / "figures" / "semisynthetic_threshold.png")
+    real_npz.unlink()
+    return result
+
+
+def report_threshold(r):
+    lines = [f"{r['n_moments']:,} moments, dose {r['dose']}; real-data model effect at 1/3/6 h: "
+             + " ".join(f"{r['real_model_mean'][h - 1]:+.2f}" for h in (1, 3, 6)),
+             f"{'K':>4} {'hour':>4} {'injected':>9} {'recovered':>10} {'p10..p90 patients':>20} {'share':>6} "
+             f"{'>0':>5} {'clear':>6}"]
+    for k in r["k_values"]:
+        b = r["by_k"][str(k)]
+        for h in (1, 3, 6):
+            i = h - 1
+            lines.append(f"{k:>4} {h:>4} {b['injected'][i]:9.2f} {b['recovered_mean'][i]:10.2f} "
+                         f"{b['recovered_p10'][i]:+9.2f}..{b['recovered_p90'][i]:+.2f} "
+                         f"{b['recovered_share'][i]:6.0%} {b['share_moments_positive'][i]:5.0%} "
+                         f"{str(b['clearly_distinguishable'][i]):>6}")
+    for k, t in r["training"].items():
+        lines.append(f"training K={k}: best epoch {t['best_epoch']} of {t['epochs']}, "
+                     f"{t['seconds_per_epoch_median']:.0f} s/epoch, val recon {t['val_recon']:.3f}, KL {t['val_kl']:.3f}")
+    lines.append(f"smallest K clearly distinguishable at 1, 3 and 6 h: {r['smallest_k_clearly_distinguishable_at_1_3_6h']}")
+    return "\n".join(lines)

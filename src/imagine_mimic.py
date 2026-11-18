@@ -110,7 +110,10 @@ def find_moments(test, stats, vital="MAP", limit=MAP_LIMIT):
 
 
 @torch.no_grad()
-def part_b(model, test, stats, device, vital="MAP", limit=MAP_LIMIT, batch_size=128, seed=0):
+def part_b(model, test, stats, device, vital="MAP", limit=MAP_LIMIT, batch_size=128, seed=0,
+           keep_per_moment=False):
+    """keep_per_moment=True adds '_per_moment' {(row, t): (H,) mean difference}, for pairing
+    moments across models inside a job. It is removed before anything is written out."""
     S, H = N_SAMPLES, HORIZON_B
     j = VITALS.index(vital)
     moments = find_moments(test, stats, vital, limit)
@@ -140,6 +143,9 @@ def part_b(model, test, stats, device, vital="MAP", limit=MAP_LIMIT, batch_size=
         return out
     d = torch.cat(diffs)                                                        # (M, S, H)
     per_moment = d.mean(1)                                                      # (M, H)
+    if keep_per_moment:                                                         # same order as the loop above
+        keys = [(i, t) for t, rows in sorted(by_t.items()) for i in rows]
+        out["_per_moment"] = dict(zip(keys, per_moment))
     out.update(
         mean_diff=per_moment.mean(0).tolist(),
         sample_sd=d.std(1).mean(0).tolist(),                                    # spread across the 50 samples
