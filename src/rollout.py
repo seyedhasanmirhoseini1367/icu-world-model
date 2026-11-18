@@ -50,7 +50,7 @@ def imagine(model, x, mask, delta, a_hist, a_future):
     imagined = []
     for k in range(a_future.shape[1]):
         L = x.shape[1]                                                    # current length, L0 + k
-        tokens = model.embed(x, mask, delta, a_prev, torch.arange(L))     # (S, L, D)
+        tokens = model.embed(x, mask, delta, a_prev, torch.arange(L, device=x.device))  # (S, L, D)
         h_t = model.encode(tokens)[:, -1]                                 # (S, D) summary up to the last hour
         a_t = a_future[:, k]                                              # (S, A)
         mu, log_sigma = model.prior(torch.cat([h_t, a_t], -1))            # (S, Z) each
