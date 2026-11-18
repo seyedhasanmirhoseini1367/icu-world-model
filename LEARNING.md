@@ -741,6 +741,96 @@ model can learn a vasopressor effect when the data contains a clear one, and tha
 near-zero effect on real MIMIC is mostly a statement about the data. That is exactly
 the kind of evidence the open questions in the summary below ask for.
 
+### Stage 10b - Detection threshold: how small an effect can the model find?
+
+K = 100 is a large, clean effect. The next question is how small an injected effect
+the same model can still pick up. The **detection threshold** is the smallest effect
+that can be told apart from "no effect".
+
+**What we did.**
+- We used the same benchmark with two more strengths: **K = 10** and **K = 30** mmHg
+  per mcg/kg/min.
+- At the test dose of 0.1 mcg/kg/min, those add +1 and +3 mmHg at steady state. K = 100
+  adds +10 mmHg. The lag (tau = 1 h) is the same in every run.
+- Everything else matched the K = 100 run: model, hyperparameters, seed 0, GPU and W&B
+  logging. For K = 100 we reused the Stage 10 model.
+- All three models were tested on the **same 6,413 moments** with the **same random
+  numbers**.
+
+**How "recovered" is measured here (paired).**
+- For each moment we take the effect the semi-synthetic model imagines (NEE 0.1 minus
+  NEE 0).
+- From it we subtract the effect the **real-data model** imagines for that same moment.
+- "Recovered" is this difference. It removes whatever effect the real-data model
+  already shows (+0.12 / +0.22 / +0.06 mmHg at 1 / 3 / 6 h).
+- The spread is the 10th to 90th percentile of this difference **across moments
+  (patients)**.
+
+**The criterion, fixed before we looked at the results.** An effect is **clearly
+distinguishable** at an hour if the whole 10–90% range across patients lies above
+zero. In words: at least 90% of patients show a positive recovered effect, not only
+the average. The smallest K that counts must pass at 1, 3 *and* 6 h.
+
+| K | hour | injected | recovered (mean) | 10–90% across patients | share recovered | patients > 0 | clear? |
+|---|---|---|---|---|---|---|---|
+| 10 | 1 | 0.63 | 0.10 | +0.03 .. +0.17 | 15% | 98% | yes |
+| 10 | 3 | 0.95 | 0.67 | +0.55 .. +0.78 | 70% | 100% | yes |
+| 10 | 6 | 1.00 | 0.72 | +0.58 .. +0.85 | 72% | 100% | yes |
+| 30 | 1 | 1.90 | 0.17 | +0.06 .. +0.29 | 9% | 98% | yes |
+| 30 | 3 | 2.85 | 2.15 | +1.92 .. +2.38 | 75% | 100% | yes |
+| 30 | 6 | 2.99 | 2.39 | +2.11 .. +2.69 | 80% | 100% | yes |
+| 100 | 1 | 6.32 | 3.39 | +2.69 .. +4.19 | 54% | 100% | yes |
+| 100 | 3 | 9.50 | 8.08 | +7.52 .. +8.68 | 85% | 100% | yes |
+| 100 | 6 | 9.98 | 8.49 | +7.83 .. +9.21 | 85% | 100% | yes |
+
+All effects are in mmHg of MAP.
+
+![Detection threshold](outputs/figures/semisynthetic_threshold.png)
+
+Training: K = 10 stopped early at epoch 135 and K = 30 at epoch 143. The checkpoint
+kept for both was **epoch 120**. Epoch 128 had a validation loss lower by less than
+0.0001, which the early-stopping rule doesn't count as an improvement. The run summary
+printed 128 because it takes the plain minimum; the models we used are from epoch 120.
+Each epoch took about 12 s on the T4.
+
+**Answer: the smallest K that is clearly distinguishable is K = 10**, the smallest one
+we tested. So the real threshold is **at or below +1 mmHg** at steady state for this
+dose. We did not find where detection stops; we only know it is below K = 10.
+
+**What else the table shows.**
+- **The model finds most of the effect even when it is small.** At steady state it
+  recovers 72% (K = 10), 80% (K = 30) and 85% (K = 100). The share grows with K, so a
+  small effect is credited to the drug a bit less fully than a large one.
+- **The first hour is the weak spot, and it gets worse as the effect shrinks.** At hour
+  1 the share is 54% for K = 100 but only 15% for K = 10 and 9% for K = 30. That is
+  0.1–0.2 mmHg. This matches Stage 10: the direct path from the *current* action into
+  the prior barely works. The effect arrives an hour later, through the previous action
+  in the next token. For small effects that path does almost nothing.
+- **The patient spread is narrow.** This is expected: the injected effect does not
+  depend on the patient, and the paired random numbers remove sampling noise.
+
+**An important limit on "clearly distinguishable".** The 10–90% range measures
+differences **between patients**, under one trained model of each kind. It doesn't
+measure **training noise**. Two models trained on the *same* real data with different
+seeds would also differ somewhat, and we haven't measured by how much on MIMIC. So the
+0.10 mmHg at hour 1 for K = 10 may be within ordinary run-to-run variation. The
+0.6–0.7 mmHg from hour 3 onward is more convincing, but it has not been tested against
+that noise either. The clean control would be a "K = 0" run: retrain on the unmodified
+data with another seed and measure the same paired difference. That gives the noise
+floor any recovered effect has to beat. It needs new training, so we haven't done it
+yet.
+
+**What it teaches.**
+- On a clean, planted effect the architecture is fairly sensitive: about 1 mmHg per
+  0.1 mcg/kg/min is detected and about 70% recovered from hour 3 onward.
+- That makes the near-zero effect on real MIMIC (Stage 8) even more a statement about
+  the data than about the model.
+- Two things still point at the model: the weak first hour, and the missing 15–30% at
+  steady state.
+- "Clearly distinguishable" is only as good as the noise you compare against.
+  Patient-to-patient spread is one kind of noise. Training-run spread is another, and
+  it is still unmeasured.
+
 ---
 
 ## Stage 8 - What we learned
