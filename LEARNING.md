@@ -361,8 +361,29 @@ ventilation from 6:15 to 8:00 gives 0.75 then 1.0; 98.6 F becomes 37.0 C. That t
 found one bug (an impossible reading spoiled its whole hour), now fixed.
 
 [`notebooks/kaggle_mimic.ipynb`](notebooks/kaggle_mimic.ipynb) runs the extraction and
-the Stage 4 training on the full tables on Kaggle. It ran end to end locally on the
-sample for 2 epochs; it has not been run on the full data yet.
+the Stage 4 training on the full tables on Kaggle (code attached as a private Kaggle
+dataset, so no GitHub token is needed).
+
+**The full run.** On Kaggle's CPU the whole run took about 3 h 50 min: 5 minutes of
+extraction, then 120 epochs of about 113 seconds each.
+
+- **Data**: 93,224 ICU stays of at least 6 hours, split by patient into 65,161 / 14,169
+  / 13,894 stays. Most stays fill all 48 hours.
+- **How often things are measured** (share of valid hours): HR 93%, RR 92%, SpO2 91%,
+  MAP 87%, temperature 28%.
+- **How often actions happen**: vasopressor 14.3% of hours, fluid bolus 2.5%, invasive
+  ventilation 21.6%. Real care looks much like our simulated *policy* dataset
+  (vasopressor 18%, bolus 2%), not the explore one.
+- **Training**: early stopping at epoch 120, best epoch 105, validation reconstruction
+  -0.23 and KL 2.61 nats/hour ([loss curves](outputs/figures/mimic_train_curves.png)).
+- **Latent use**: unlike the simulator, the KL rose well above the 1-nat free-bits floor
+  and 3 of 8 dimensions are used ([KL per dimension](outputs/figures/mimic_kl_per_dim.png)).
+  With 5 vitals and real, messier patients there is more in each next hour that the
+  history alone cannot predict, and `z` carries it. No posterior collapse.
+- **A data warning**: the largest values are implausible, a norepinephrine-equivalent
+  dose of 15.1 mcg/kg/min (typical doses are below 1) and an 11 L bolus in one hour.
+  These are probably unit or charting errors; the extraction should cap or drop them
+  before the model is trusted on dose effects.
 
 **What it teaches.**
 - **Most of the work in real data is deciding what an "action" is.** The simulator gave
