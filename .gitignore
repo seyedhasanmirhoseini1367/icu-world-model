@@ -1,4 +1,6 @@
 .venv/
 __pycache__/
 .ipynb_checkpoints/
-outputs/
+# generated data, checkpoints and logs stay local; figures are versioned for LEARNING.md
+outputs/*
+!outputs/figures/

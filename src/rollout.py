@@ -102,12 +102,13 @@ def true_both_arms(sim, idx, seed=0):
 
 # ---------------------------------------------------------------- the experiment
 
-def run_causal_test(name, seed=0):
+def run_causal_test(name, seed=0, model_file=None):
+    """model_file defaults to outputs/model_{name}.pt (the Stage 4 model)."""
     torch.manual_seed(seed)
     stats = norm_stats()
     to_mmhg = lambda z: z * stats["std"][0] + stats["mean"][0]           # noqa: E731
     model = WorldModel()
-    model.load_state_dict(torch.load(OUT / f"model_{name}.pt"))
+    model.load_state_dict(torch.load(model_file or OUT / f"model_{name}.pt"))
     test = load_splits(name)[0]["test"]
     sim = np.load(OUT / f"sim_{name}.npz")
 

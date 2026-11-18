@@ -89,10 +89,15 @@ def run_epoch(model, loader, optimizer=None):
     return result
 
 
-def train(name):
-    torch.manual_seed(SEED)
-    loaders, _ = make_loaders(name, batch_size=BATCH_SIZE)
-    model = WorldModel()
+def train(name, seed=SEED, loaders=None, model_kwargs=None):
+    """Train on dataset `name`. seed changes the initial weights and batch order;
+    the default seed saves to model_{name}.pt, other seeds to model_{name}_s{seed}.pt.
+    loaders / model_kwargs let other data (Stage 7) reuse the same loop."""
+    tag = name if seed == SEED else f"{name}_s{seed}"
+    torch.manual_seed(seed)
+    if loaders is None:
+        loaders, _ = make_loaders(name, batch_size=BATCH_SIZE)
+    model = WorldModel(**(model_kwargs or {}))
     optimizer = torch.optim.AdamW(model.parameters(), lr=LR, weight_decay=WEIGHT_DECAY)
     history, best_val, best_state, bad_epochs = [], float("inf"), None, 0
 
@@ -105,16 +110,16 @@ def train(name):
         else:
             bad_epochs += 1
         if epoch % 10 == 0 or bad_epochs == 0:
-            print(f"  [{name}] epoch {epoch:3d}  train loss {tr['loss']:.3f}  "
+            print(f"  [{tag}] epoch {epoch:3d}  train loss {tr['loss']:.3f}  "
                   f"val loss {va['loss']:.3f} (recon {va['recon']:.3f}, KL {va['kl']:.3f})"
                   + ("  *best" if bad_epochs == 0 else ""))
         if bad_epochs >= PATIENCE:
-            print(f"  [{name}] early stop at epoch {epoch}; best epoch {epoch - PATIENCE}")
+            print(f"  [{tag}] early stop at epoch {epoch}; best epoch {epoch - PATIENCE}")
             break
 
     model.load_state_dict(best_state)
-    torch.save(model.state_dict(), OUT / f"model_{name}.pt")
-    (OUT / f"history_{name}.json").write_text(json.dumps(history))
+    torch.save(model.state_dict(), OUT / f"model_{tag}.pt")
+    (OUT / f"history_{tag}.json").write_text(json.dumps(history))
     return model, history, loaders
 
 
