@@ -14,9 +14,12 @@ Early stopping on validation loss; the best checkpoint is kept.
 Run from the project root:  python src/train.py
 """
 import copy
+import inspect
 import json
 import math
+import os
 import sys
+import time
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -34,6 +37,9 @@ BATCH_SIZE = 64
 MAX_EPOCHS, PATIENCE = 300, 15
 USED_DIM_NATS = 0.1        # a latent dim counts as "used" above this KL
 SEED = 0
+DEVICE = "cpu"             # set to "cuda" for GPU runs (Stage 7 on Kaggle)
+TIME_BUDGET_S = None       # stop before an epoch would end past this many seconds
+WANDB_RUN = None           # active Weights & Biases run, only when WANDB_API_KEY is set
 
 OUT = Path(__file__).resolve().parent.parent / "outputs"
 FIG = OUT / "figures"
@@ -71,12 +77,14 @@ def run_epoch(model, loader, optimizer=None):
     with a fixed random seed so validation numbers are comparable across epochs."""
     training = optimizer is not None
     model.train(training)
+    device = next(model.parameters()).device
     sums, n = dict(loss=0.0, recon=0.0, kl=0.0), 0
     kl_dims_sum = 0.0
     with torch.random.fork_rng(enabled=not training), torch.set_grad_enabled(training):
         if not training:
             torch.manual_seed(123)
         for batch in loader:
+            batch = {k: v.to(device) for k, v in batch.items()}
             loss, recon, kl, kl_dims = compute_loss(model(batch))
             if training:
                 optimizer.zero_grad()
@@ -92,37 +100,81 @@ def run_epoch(model, loader, optimizer=None):
     return result
 
 
-def train(name, seed=SEED, loaders=None, model_kwargs=None):
+def _wandb_start(tag, seed, loaders, model_kwargs, extra_config):
+    """Start a Weights & Biases run only if WANDB_API_KEY is set; otherwise None.
+    The key is read by wandb from the environment and never printed or stored here."""
+    global WANDB_RUN
+    if not os.environ.get("WANDB_API_KEY"):
+        return None
+    import wandb
+    model_defaults = {k: p.default for k, p in inspect.signature(WorldModel.__init__).parameters.items()
+                      if p.default is not inspect.Parameter.empty}
+    config = dict(run=tag, seed=seed, beta_kl=BETA_KL, free_bits=FREE_BITS, lr=LR,
+                  weight_decay=WEIGHT_DECAY, batch_size=BATCH_SIZE, max_epochs=MAX_EPOCHS,
+                  patience=PATIENCE, time_budget_s=TIME_BUDGET_S, device=DEVICE,
+                  **{**model_defaults, **(model_kwargs or {})},
+                  **{f"n_{k}_stays": len(dl.dataset) for k, dl in loaders.items()},
+                  **(extra_config or {}))
+    WANDB_RUN = wandb.init(project="icu-world-model", name=tag, config=config)
+    return WANDB_RUN
+
+
+def finish_wandb(summary=None):
+    """Write final numbers into the W&B run summary and close it (no-op without W&B)."""
+    global WANDB_RUN
+    if WANDB_RUN is None:
+        return
+    if summary:
+        WANDB_RUN.summary.update(summary)
+    WANDB_RUN.finish()
+    WANDB_RUN = None
+
+
+def train(name, seed=SEED, loaders=None, model_kwargs=None, wandb_config=None):
     """Train on dataset `name`. seed changes the initial weights and batch order;
     the default seed saves to model_{name}.pt, other seeds to model_{name}_s{seed}.pt.
-    loaders / model_kwargs let other data (Stage 7) reuse the same loop."""
+    loaders / model_kwargs let other data (Stage 7) reuse the same loop.
+    The best checkpoint is written every time validation improves, so a run stopped by
+    TIME_BUDGET_S (or killed) still leaves the best model on disk."""
     tag = name if seed == SEED else f"{name}_s{seed}"
     torch.manual_seed(seed)
     if loaders is None:
         loaders, _ = make_loaders(name, batch_size=BATCH_SIZE)
-    model = WorldModel(**(model_kwargs or {}))
+    model = WorldModel(**(model_kwargs or {})).to(DEVICE)
     optimizer = torch.optim.AdamW(model.parameters(), lr=LR, weight_decay=WEIGHT_DECAY)
     history, best_val, best_state, bad_epochs = [], float("inf"), None, 0
+    run = _wandb_start(tag, seed, loaders, model_kwargs, wandb_config)
+    start = time.time()
 
     for epoch in range(1, MAX_EPOCHS + 1):
+        t0 = time.time()
         tr = run_epoch(model, loaders["train"], optimizer)
         va = run_epoch(model, loaders["val"])
-        history.append(dict(epoch=epoch, train=tr, val=va))
-        if va["loss"] < best_val - 1e-4:
+        seconds = time.time() - t0
+        is_best = va["loss"] < best_val - 1e-4
+        history.append(dict(epoch=epoch, train=tr, val=va, seconds=seconds))
+        if is_best:
             best_val, best_state, bad_epochs = va["loss"], copy.deepcopy(model.state_dict()), 0
+            torch.save(best_state, OUT / f"model_{tag}.pt")
         else:
             bad_epochs += 1
-        if epoch % 10 == 0 or bad_epochs == 0:
-            print(f"  [{tag}] epoch {epoch:3d}  train loss {tr['loss']:.3f}  "
-                  f"val loss {va['loss']:.3f} (recon {va['recon']:.3f}, KL {va['kl']:.3f})"
-                  + ("  *best" if bad_epochs == 0 else ""))
+        (OUT / f"history_{tag}.json").write_text(json.dumps(history))
+        print(f"  [{tag}] epoch {epoch:3d}  train loss {tr['loss']:.3f}  "
+              f"val loss {va['loss']:.3f} (recon {va['recon']:.3f}, KL {va['kl']:.3f})  "
+              f"{seconds:.0f}s" + ("  *best" if is_best else ""), flush=True)
+        if run is not None:
+            run.log(dict(epoch=epoch, train_loss=tr["loss"], val_loss=va["loss"],
+                         val_recon=va["recon"], val_kl=va["kl"], seconds_per_epoch=seconds,
+                         lr=optimizer.param_groups[0]["lr"], is_best=int(is_best),
+                         **{f"val_kl_dim_{i}": k for i, k in enumerate(va["kl_dims"])}), step=epoch)
         if bad_epochs >= PATIENCE:
             print(f"  [{tag}] early stop at epoch {epoch}; best epoch {epoch - PATIENCE}")
             break
+        if TIME_BUDGET_S and time.time() - start + seconds > TIME_BUDGET_S:
+            print(f"  [{tag}] time budget of {TIME_BUDGET_S / 3600:.1f} h reached after epoch {epoch}")
+            break
 
     model.load_state_dict(best_state)
-    torch.save(model.state_dict(), OUT / f"model_{tag}.pt")
-    (OUT / f"history_{tag}.json").write_text(json.dumps(history))
     return model, history, loaders
 
 

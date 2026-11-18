@@ -22,6 +22,8 @@ Per ICU stay, hours 0..47 after ICU admission (hour k = [intime+k h, intime+(k+1
       Ringer's 225828, only rows in the "03-IV Fluid Bolus" order category
       (the same items are also used as continuous carriers for drugs)
     2 invasive ventilation 225792 (procedureevents): fraction of the hour on it
+  Implausible doses are capped (NEE at 2 mcg/kg/min, bolus at 3 L per hour) and the
+  number of capped hours is saved with the data.
   valid (T,): True for hours inside the ICU stay; stays shorter than 48 h are padded.
 
 Output: one .npz with raw values; load_splits_mimic() z-scores with train
@@ -55,6 +57,9 @@ PREFERRED = {220052, 223762}  # arterial MAP and Celsius temperature win over th
 NEE_FACTOR = {221906: 1.0, 221289: 1.0, 229617: 1.0, 221749: 0.1, 221662: 0.01, 222315: 2.5}
 FLUID_ITEMS = (225158, 225828)
 VENT_ITEM = 225792
+# Hours above these are capped: higher values are almost always unit or charting errors.
+NEE_CLIP = 2.0                # mcg/kg/min norepinephrine equivalent
+FLUID_CLIP_L = 3.0            # litres of bolus started in one hour
 
 
 def find_files(root, table):
@@ -164,8 +169,17 @@ def extract(root, max_stays=0):
         FROM hours GROUP BY ALL""").fetchnumpy()
     a[vent["row"], vent["hour"], 2] = vent["frac"]
 
+    # Cap implausible doses and count how many hours were affected.
+    clipped_nee = int((a[..., 0] > NEE_CLIP).sum())
+    clipped_fluid = int((a[..., 1] > FLUID_CLIP_L).sum())
+    a[..., 0] = np.minimum(a[..., 0], NEE_CLIP)
+    a[..., 1] = np.minimum(a[..., 1], FLUID_CLIP_L)
+    print(f"clipped hours: NEE > {NEE_CLIP} mcg/kg/min: {clipped_nee}, "
+          f"fluid bolus > {FLUID_CLIP_L} L: {clipped_fluid}")
+
     valid = np.arange(T_HOURS)[None, :] < stays["n_hours"][:, None]          # (N, T)
-    return dict(x=x, a=a, valid=valid, subject_id=stays["subject_id"], stay_id=stays["stay_id"])
+    return dict(x=x, a=a, valid=valid, subject_id=stays["subject_id"], stay_id=stays["stay_id"],
+                clipped_nee_hours=clipped_nee, clipped_fluid_hours=clipped_fluid)
 
 
 def load_splits_mimic(path):
@@ -192,7 +206,14 @@ def make_loaders_mimic(path, batch_size=64):
             for k, ds in datasets.items()}, stats
 
 
+def clip_counts(path):
+    """Hours capped during extraction; empty for files made before clipping existed."""
+    raw = np.load(path)
+    return {k: int(raw[k]) for k in ("clipped_nee_hours", "clipped_fluid_hours") if k in raw}
+
+
 def describe(path):
+    print("clipped hours:", clip_counts(path) or "none recorded")
     datasets, stats = load_splits_mimic(path)
     print("splits (stays): " + ", ".join(f"{k} {len(v)}" for k, v in datasets.items()))
     tr = datasets["train"]
@@ -218,5 +239,5 @@ if __name__ == "__main__":
     data = extract(args.root, args.max_stays)
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
     np.savez_compressed(args.out, **data)
-    print(f"saved {args.out}: " + ", ".join(f"{k} {v.shape}" for k, v in data.items()))
+    print(f"saved {args.out}: " + ", ".join(f"{k} {np.shape(v)}" for k, v in data.items()))
     describe(args.out)

@@ -97,7 +97,7 @@ class WorldModel(nn.Module):
 
         # valid (B, T): 1 for real hours, 0 for padding after a short stay (real data only).
         # Padding sits at the end, so causal attention never lets a real hour see it.
-        valid = batch.get("valid", torch.ones(B, T))
+        valid = batch.get("valid", torch.ones(B, T, device=x.device))
         out = dict(h=h, prior_mu=prior_mu, prior_log_sigma=prior_ls,
                    post_mu=post_mu, post_log_sigma=post_ls, z=z,
                    dec_mu=dec_mu, dec_log_sigma=dec_ls,
