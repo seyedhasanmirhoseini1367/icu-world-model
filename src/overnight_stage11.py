@@ -194,7 +194,7 @@ def run_all(icu_dir, weights, work, tmp, device="cpu", max_stays=0, max_epochs=N
                 name, seed=seed, loaders=loaders,
                 model_kwargs=dict(n_vitals=len(mimic_data.VITALS), n_actions=len(mimic_data.ACTIONS),
                                   act_now=act_now),
-                wandb_config=dict(stage="11", variant="act_now" if act_now else "original", act_now=act_now,
+                wandb_config=dict(stage="11", variant="act_now" if act_now else "original",
                                   semisynthetic=k > 0, injected_k_mmhg_per_dose=float(k),
                                   injected_tau_h=SS.TAU_H, nee_clip_mcg_kg_min=mimic_data.NEE_CLIP,
                                   fluid_clip_l_per_hour=mimic_data.FLUID_CLIP_L, **(S["clips"] or {})))
