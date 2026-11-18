@@ -63,7 +63,7 @@ vasopressors push some patients far above normal.
   treatment (4% of hours), so there would have been little treatment to learn from.
   We settled on `beta = 5` (untreated MAP settles at `m_base - 50*s`).
 - A model can only learn the effect of an action it has seen, in situations where it
-  has seen it. This idea returns in Stage 5 under the name *positivity*.
+  has seen it. This requirement is called **positivity**; it returns in Stage 5.
 - The simulator's dynamics are linear with additive noise. One consequence, which
   matters in Stage 5: the true effect of the vasopressor is the same for every patient.
 
@@ -236,8 +236,8 @@ Where the error comes from, MAP at +12 h:
   the drug *lowers* MAP. The reason: the clinician's decision depends only on observed
   MAP, and the model conditions on the observed history `h`. Conditioning on everything
   that drove the decision removes the confounding.
-- **Positivity is what hurt.** **Positivity** (or overlap) means every action you want
-  to ask about must have been taken, at least sometimes, in comparable situations. A
+- **Positivity is what hurt.** Positivity (also called overlap) means every action you
+  want to ask about must have been taken, at least sometimes, in comparable situations. A
   hypotensive patient left untreated for 12 hours essentially never occurs in either
   dataset (probability about 0.2^12 under the clinician, 0.38^12 in the explore data),
   so both models extrapolate the `u=0` arm and fall back on "MAP drifts back to the
@@ -345,8 +345,8 @@ Each ICU stay becomes 48 hourly steps from ICU admission:
     recorded as "rate R from start to end", so each hour gets the **time-weighted**
     average: an infusion running for the second half of an hour counts half.
   - *Fluid bolus* in litres: saline or Ringer's lactate, but only orders in the
-    "IV fluid bolus" category. In the local sample, most saline rows (848 of 1,412) are
-    small volumes used to carry drugs, not boluses.
+    "IV fluid bolus" category. In the local sample, only 79 of 1,325 saline rows are
+    boluses; 848 are small volumes used to carry drugs.
   - *Invasive ventilation*: the fraction of the hour spent on a ventilator.
 - **valid**: real stays are not all 48 hours long. Shorter stays are padded at the end,
   and the loss ignores padded hours. We checked that a stay padded after 30 hours gives
@@ -377,3 +377,116 @@ sample for 2 epochs; it has not been run on the full data yet.
 - **The real clinician policy is the policy dataset, not the explore dataset.** There
   is no random exploration in MIMIC. Everything Stages 5 and 6 showed about missing
   positivity applies, and there is no simulator to tell us the true effect.
+
+---
+
+## Stage 8 - What we learned
+
+### The main lessons
+
+1. **A world model is a learned simulator, and the action enters through the prior.**
+   Everything the model believes about a treatment is in how `p(z_{t+1} | h_t, a_t)`
+   moves when `a_t` changes. Asking "what does the model think the drug does?" means
+   imagining with different actions and comparing.
+
+2. **Predicting the next hour well is not the same as knowing what treatment does.**
+   Both models predicted the next hour's MAP equally well (2.35 and 2.38 mmHg, about 80%
+   band coverage). Twelve hours after starting a vasopressor they predicted effects of
+   22.7 and 31.4 mmHg, against a true 40.9. Standard validation metrics cannot see this.
+
+3. **Confounding by things the model observes can be handled; missing data on actions
+   cannot.** Our clinician decided from observed MAP only, so conditioning on the history
+   removed the confounding: the raw data said the drug *lowers* MAP by 4.5 mmHg, yet
+   both models got the right sign and the right one-hour size. What they could not fix
+   was positivity: treatment sequences that (almost) never happened in the data, such as
+   12 hours without treatment at low MAP.
+
+4. **Exploration in the data helps, but only for what it explores.** The explore model
+   got the vasopressor arm right to within 0.2 mmHg. Even with 60% random actions, a
+   12-hour run of no treatment at low MAP was too rare to learn, so its untreated arm
+   was 9 mmHg too high.
+
+5. **Errors compound in imagination.** Small one-step errors grow with every imagined
+   hour fed back in as if it were real.
+
+6. **Ensembles measure disagreement, not error.** Five models differing only in seed
+   agreed closely (spread 0.6-0.8 mmHg) exactly where they were most wrong (7-9 mmHg),
+   because they all filled the gap in the same way. The truth was inside the ensemble's
+   range for only 3-9% of patients in the untreated arm.
+
+7. **The latent `z` was barely used.** KL sat at the free-bits floor with 1 of 8
+   dimensions active, encoding mostly measurement noise. In this simple world the
+   history `h` already carried the predictable part. A richer world may need more.
+
+### What a world model on real ICU data can and cannot tell us
+
+**It can:**
+- forecast vitals under the care patients actually receive, and flag deterioration;
+- simulate "what usually happens next" for patients like this one under usual care;
+- compare *small* departures from usual care, where similar patients really were
+  treated differently (for example, starting a vasopressor an hour earlier or later);
+- give a compact summary of patient state (`h`) for other tasks.
+
+**It cannot, without strong extra assumptions:**
+- give the effect of strategies clinicians rarely or never use (no positivity). It will
+  still produce a confident-looking answer;
+- remove confounding by information that is not in the tables: what the clinician saw
+  at the bedside, read in the notes or heard from the patient. Our simulated clinician
+  used only charted MAP; real ones do not;
+- separate physiology from hospital habits. When and how often something is measured
+  depends on how sick the patient is, and the model learns both;
+- be checked against the truth. There is no simulator for real patients, so neither
+  validation loss nor ensemble agreement can confirm a counterfactual.
+
+### Open questions for a PhD proposal
+
+1. **Detecting missing positivity for action sequences.** How can a world model tell,
+   for a given history and a planned sequence of actions, whether the data supports the
+   question, and refuse to answer when it does not? (Sequential propensity models,
+   density estimation over `(h, a)` pairs.)
+2. **Uncertainty that catches shared extrapolation.** Seed ensembles failed here. Do
+   ensembles with different architectures or training data, Bayesian approaches, or
+   conformal prediction for rollouts do better, measured on simulators where the truth
+   is known?
+3. **Validation without ground truth.** Semi-synthetic benchmarks (real patient
+   histories with simulated treatment effects), natural experiments such as changes in
+   hospital protocols, and agreement with randomised trials of MAP targets
+   (e.g. SEPSISPAM, the 65 trial) as external checks.
+4. **Unmeasured confounding.** How sensitive are a world model's counterfactuals to
+   confounders it cannot see, and can clinical notes or other proxies reduce it?
+5. **Hybrid models.** Our simulator has simple physiological structure. Can building
+   known physiology into the model (grey-box or mechanistic components) make the
+   untreated arm extrapolate correctly where a purely learned model did not?
+6. **Informative measurement.** Modelling *when* things are measured together with
+   *what* is measured, so that the measurement process is not mistaken for physiology.
+7. **From prediction to decisions.** When is evaluating a treatment strategy with a
+   world model (model-based off-policy evaluation) more reliable than reweighting the
+   observed data, and how should the two be combined?
+8. **Transfer and resolution.** Does a model trained on one hospital (MIMIC) hold in
+   another (e.g. eICU)? Do continuous-time models avoid problems that hourly binning
+   creates?
+
+---
+
+## Glossary
+
+| Term | Meaning | First defined |
+|---|---|---|
+| World model | A learned model of how an environment changes, used to predict "what happens next" | Introduction |
+| Action-conditioned | Predicts what happens under each possible action | Introduction |
+| Hidden state | The true variables of the system that we never observe directly | Stage 1 |
+| Confounding | Something drives both the treatment and the outcome, so their raw association misleads | Stage 1 |
+| Positivity (overlap) | Every action you ask about was actually taken in comparable situations | Stage 1, Stage 5 |
+| z-score | (value - mean) / standard deviation | Stage 2 |
+| h | The transformer's summary of everything up to hour t | Stage 3 |
+| Latent z | Variables the model invents to describe what happens next | Stage 3 |
+| Prior | Distribution over z before seeing the next observation | Stage 3 |
+| Posterior | Distribution over z after seeing the next observation (training only) | Stage 3 |
+| KL divergence | How far one distribution is from another, in nats | Stage 4 |
+| Free bits | KL below this amount is not penalised | Stage 4 |
+| Posterior collapse | The posterior copies the prior and z carries nothing | Stage 4 |
+| Aleatoric uncertainty | Randomness in the world itself; more data does not remove it | Stage 4 |
+| Rollout (imagination) | Letting the model run forward, feeding its own predictions back in | Stage 5 |
+| Counterfactual | What would have happened to the same patient under a different action | Stage 5 |
+| Epistemic uncertainty | Uncertainty about the model, from limited data; more data can reduce it | Stage 6 |
+| Norepinephrine equivalent | Vasopressor doses converted to the norepinephrine dose with similar effect | Stage 7 |
