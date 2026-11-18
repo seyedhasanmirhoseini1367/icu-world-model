@@ -645,6 +645,104 @@ change when the action changes. An ablation like this one is the cheapest such c
 
 ---
 
+## Stage 10 - A semi-synthetic benchmark: architecture problem or data problem?
+
+**The question.** Stage 9 showed that the real-data model barely uses the vasopressor.
+Two very different explanations fit that result:
+- **architecture problem**: this model and loss would ignore actions even if they had a
+  strong effect;
+- **data problem**: the model could learn an action effect, but in real MIMIC the
+  effect is hidden by confounding, titration and weak positivity.
+
+A **semi-synthetic benchmark** separates them: take real data, add an effect of known
+size, and check whether the model finds it. Everything else stays real, so the test is
+as hard as the real data in every other way.
+
+**What we did.** [`src/semisynthetic.py`](src/semisynthetic.py). Everything is kept as
+it was: histories, actions, missing values, the patient split. Only measured MAP is
+changed, by adding the vasopressor dose passed through a one-hour lag:
+
+```
+e_0     = 0
+e_{t+1} = e_t + (1 - exp(-1/tau)) * (NEE_t - e_t)      tau = 1 hour
+MAP'_t  = MAP_t + K * e_t                               only where MAP was measured
+K = 100 mmHg per mcg/kg/min
+```
+
+`NEE_t` is the hourly norepinephrine-equivalent dose (already capped at 2), so a dose
+given in hour `t` first raises MAP in hour `t+1`, the same timing the model uses. For a
+dose of 0.1 started at the decision hour, the added rise is
+`K x 0.1 x (1 - exp(-h))`: **+6.3 mmHg after 1 hour, +9.5 after 3, +10.0 after 6**,
+moving towards +10 at steady state. Missing MAP stays missing. We checked the formula on a
+hand-made stay before running it.
+
+Then we trained the **same model with the same hyperparameters** on this data (Kaggle
+GPU, about 12 s per epoch, early stop at epoch 111, best epoch 96, logged to W&B), and
+ran the Stage 8 Part B check on the same 6,413 moments (MAP < 65, no vasopressor yet).
+The moments are identical in both datasets: before the first vasopressor nothing is
+added, so their histories did not change.
+
+**The comparison.** The real-data model already has a tiny learned effect (from Stage 8).
+The new model should show that effect *plus* the injected one, so the **recovered
+effect** is the new model's effect minus the real-data model's effect.
+
+| Hours after decision | Injected (known) | Semi-synthetic model | Real-data model | Recovered | Share of injected |
+|---|---|---|---|---|---|
+| 1 | 6.32 | 3.51 | 0.12 | 3.39 | 54% |
+| 2 | 8.65 | 7.66 | 0.22 | 7.44 | 86% |
+| 3 | 9.50 | 8.30 | 0.22 | 8.08 | 85% |
+| 4 | 9.82 | 8.52 | 0.18 | 8.34 | 85% |
+| 5 | 9.93 | 8.58 | 0.12 | 8.45 | 85% |
+| 6 | 9.98 | 8.55 | 0.06 | 8.49 | 85% |
+
+(All in mmHg, difference between the 0.1 and 0 plans. For the semi-synthetic model the
+spread across the 50 samples is SD 1.0-1.4 and across patients SD 0.5-0.7.)
+([Figure](outputs/figures/semisynthetic_effect.png),
+[training curves](outputs/figures/semisynthetic_train_curves.png))
+
+**The Stage 9 ablation on the new model:**
+
+| Action input | MAP MAE, all hours | MAP MAE, NEE-active hours | Real-data model, NEE-active |
+|---|---|---|---|
+| real | 7.088 mmHg | 6.652 mmHg | 6.499 mmHg |
+| all zero | +4.7% | **+29.4%** | +0.5% |
+| shuffled | +10.0% | **+32.7%** | +0.5% |
+| NEE zero | +4.3% | **+27.6%** | +0.2% |
+
+HR barely changes (0.1-1.1%), as it should: the injection touched only MAP. Changing
+the current dose from 0 to 0.1 now moves the prior mean of `z` by 0.27 against a typical
+spread of 1.66 (16%, up from 2.5%) and raises the next hour's predicted MAP by
++2.19 mmHg (up from +0.07).
+
+**Interpretation.** By the rule we set in advance (far below 10 means architecture,
+close to 10 means data), the result points mainly to **the data**:
+- The same architecture, loss and hyperparameters recover **about 85%** of a strong,
+  clean effect from hour 2 on, and the ablation shows the model now leans on the
+  vasopressor heavily where it matters. So nothing in the model *prevents* it from
+  using actions. On real MIMIC the vasopressor signal is weak or cancelled out
+  (confounding, titration, weak positivity), and the model learns what is there.
+- **But not all of it.** Two shortfalls are worth keeping in mind:
+  - **The first hour is the weakest**: 3.4 of 6.3 mmHg (54%). The direct path from the
+    current action into the prior is the weak one (the one-step prior moves MAP by only
+    2.2 mmHg); most of the effect arrives one hour later, through the previous action in
+    the next token. That is an architectural detail worth fixing.
+  - **About 15% is missing at steady state.** Some of the injected rise is absorbed as
+    if it were part of the patient's state, not credited to the drug.
+- **The benchmark is easy on purpose.** K = 100 is a large effect: at the 90th
+  percentile dose (0.35) it adds 35 mmHg, and the injected effect does not depend on
+  how sick the patient is. A real effect is smaller, varies between patients and is
+  confounded. Recovering 85% of a strong, clean effect does not mean the model would
+  recover a weak one. Repeating this with smaller K is the natural next test.
+
+**What it teaches.** When a model fails to learn something, first check whether it
+*can*. A semi-synthetic benchmark keeps all the difficulty of real data but plants a
+known answer, so failures can be blamed on the right thing. Here it showed that the
+model can learn a vasopressor effect when the data contains a clear one, and that the
+near-zero effect on real MIMIC is mostly a statement about the data. That is exactly
+the kind of evidence the open questions in the summary below ask for.
+
+---
+
 ## Stage 8 - What we learned
 
 ### The main lessons
