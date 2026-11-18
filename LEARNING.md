@@ -422,6 +422,33 @@ What it shows:
 - **This is still not a causal test.** Like Stage 4 in the simulator, one-step accuracy
   says nothing about whether the model has learned what vasopressors do to MAP.
 
+**The cleaned rerun.** Same model, hyperparameters, seed and patient split; only
+changes: implausible doses capped (norepinephrine equivalent at 2 mcg/kg/min, bolus at
+3 L per hour), training on a GPU (Tesla T4), the best checkpoint saved on every
+improvement, and a time budget.
+
+- **Capped hours**: 363 vasopressor hours and 108 bolus hours, out of about 4 million
+  valid hours (both under 0.01%).
+- **Speed**: about 11 seconds per epoch on the GPU, against about 113 on Kaggle's CPU;
+  the whole run took under an hour instead of almost four.
+- **Training**: early stop at epoch 121, best epoch 106 (first run: 120 and 105);
+  validation reconstruction -0.14 and KL 2.50 nats/hour, again 3 of 8 latent dims used.
+
+| Vital | Prior MAE / RMSE, first run | Prior MAE / RMSE, cleaned | Inside 10-90% band, first / cleaned | Posterior MAE, first / cleaned |
+|---|---|---|---|---|
+| HR (bpm) | 5.16 / 7.70 | 5.15 / 7.67 | 78.1% / 77.8% | 3.59 / 3.71 |
+| RR (/min) | 2.82 / 3.99 | 2.82 / 3.99 | 77.1% / 77.0% | 0.44 / 0.53 |
+| SpO2 (%) | 1.35 / 2.14 | 1.35 / 2.14 | 78.2% / 79.1% | 0.07 / 0.07 |
+| MAP (mmHg) | 7.02 / 10.06 | 7.02 / 10.08 | 79.2% / 78.3% | 6.22 / 6.16 |
+| Temp (C) | 0.27 / 0.39 | 0.27 / 0.39 | 78.7% / 80.1% | 0.26 / 0.26 |
+
+The naive baseline is the same in both runs (same test hours, same vitals). The two
+runs are practically identical: capping 0.01% of action hours cannot change one-hour
+vital forecasts. The remaining differences (a few hundredths) are the noise of training
+twice, partly because a GPU draws different random numbers than a CPU even with the
+same seed. Capping matters for a different question, which this table does not ask:
+what the model predicts when you *change* the dose.
+
 **What it teaches.**
 - **Most of the work in real data is deciding what an "action" is.** The simulator gave
   us `u` and `f` for free. In MIMIC we had to choose units, convert between drugs,
