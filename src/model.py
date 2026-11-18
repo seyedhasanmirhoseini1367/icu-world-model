@@ -19,6 +19,12 @@ no x_{t+1}, so only the prior is used.
 The posterior also gets mask_{t+1}: missing vitals are stored as 0, and without
 the mask it could not tell "missing" from "exactly the mean".
 
+Stage 11 variant (act_now=True, default False): the current action a_t first goes
+through its own small network, act_now(a_t) = Linear(A, D) -> GELU -> Linear(D, D),
+and the prior and posterior get [h_t, act_now(a_t), ...] instead of the raw a_t.
+This gives the current dose a wider, learned path into z_{t+1}. Everything else,
+including the decoder (which still never sees a), is unchanged.
+
 Run from the project root:  python src/model.py
 """
 import torch
@@ -43,7 +49,7 @@ class GaussianHead(nn.Module):
 class WorldModel(nn.Module):
 
     def __init__(self, n_vitals=2, n_actions=2, d=64, n_layers=2, n_heads=4,
-                 z_dim=8, max_hours=64, dropout=0.1):
+                 z_dim=8, max_hours=64, dropout=0.1, act_now=False):
         super().__init__()
         self.obs_proj = nn.Linear(3 * n_vitals, d)       # [x, mask, delta] (3V) -> D
         self.act_proj = nn.Linear(n_actions, d)          # a_{t-1} (A) -> D
@@ -52,8 +58,12 @@ class WorldModel(nn.Module):
                                            batch_first=True, norm_first=True)
         self.transformer = nn.TransformerEncoder(layer, n_layers, norm=nn.LayerNorm(d),
                                                  enable_nested_tensor=False)
-        self.prior = GaussianHead(d + n_actions, d, z_dim)                     # [h, a] -> z
-        self.posterior = GaussianHead(d + n_actions + 2 * n_vitals, d, z_dim)  # [h, a, x', mask'] -> z
+        # Stage 11 variant: a learned embedding of the current action for prior and posterior.
+        self.act_now = (nn.Sequential(nn.Linear(n_actions, d), nn.GELU(), nn.Linear(d, d))
+                        if act_now else None)
+        a_dim = d if act_now else n_actions                                    # width of the action input
+        self.prior = GaussianHead(d + a_dim, d, z_dim)                         # [h, a] -> z
+        self.posterior = GaussianHead(d + a_dim + 2 * n_vitals, d, z_dim)      # [h, a, x', mask'] -> z
         self.decoder = GaussianHead(z_dim + d, d, n_vitals)                    # [z, h] -> x'
 
     # ---- building blocks (Stage 5 calls these one hour at a time) ----
@@ -68,6 +78,14 @@ class WorldModel(nn.Module):
         L = tokens.shape[1]
         causal = nn.Transformer.generate_square_subsequent_mask(L, device=tokens.device)  # (L, L), -inf above diagonal
         return self.transformer(tokens, mask=causal, is_causal=True)  # (B, L, D)
+
+    def action_input(self, a):
+        """Current action as the prior/posterior see it: raw a, or act_now(a) in the Stage 11 variant."""
+        return a if self.act_now is None else self.act_now(a)
+
+    def prior_from(self, h, a):
+        """h (..., D), current action a (..., A) -> prior mean and log sigma of z_{t+1}."""
+        return self.prior(torch.cat([h, self.action_input(a)], -1))
 
     @staticmethod
     def sample(mu, log_sigma):
@@ -89,9 +107,9 @@ class WorldModel(nn.Module):
         h_now, a_now = h[:, :-1], a[:, :-1]                                  # (B, T-1, D), (B, T-1, A)
         x_next, mask_next = x[:, 1:], mask[:, 1:]                            # (B, T-1, V) each
 
-        prior_mu, prior_ls = self.prior(torch.cat([h_now, a_now], -1))       # (B, T-1, Z) each
+        prior_mu, prior_ls = self.prior_from(h_now, a_now)                   # (B, T-1, Z) each
         post_mu, post_ls = self.posterior(
-            torch.cat([h_now, a_now, x_next, mask_next], -1))               # (B, T-1, Z) each
+            torch.cat([h_now, self.action_input(a_now), x_next, mask_next], -1))  # (B, T-1, Z) each
         z = self.sample(post_mu, post_ls)                                    # (B, T-1, Z)
         dec_mu, dec_ls = self.decoder(torch.cat([z, h_now], -1))             # (B, T-1, V) each
 
@@ -160,3 +178,12 @@ if __name__ == "__main__":
         h_same = torch.allclose(out["h"][:, :31], out3["h"][:, :31], atol=1e-5)
         prior_moves = not torch.allclose(out["prior_mu"][:, 30], out3["prior_mu"][:, 30], atol=1e-5)
         print(f"Action:    h up to hour 30 unchanged {h_same}, prior for hour 31 changed {prior_moves}")
+
+
+def load_world_model(path, n_vitals, n_actions, device="cpu"):
+    """Load a checkpoint; the Stage 11 variant is recognised by its act_now weights."""
+    state = torch.load(path, map_location="cpu")
+    model = WorldModel(n_vitals=n_vitals, n_actions=n_actions,
+                       act_now=any(k.startswith("act_now.") for k in state))
+    model.load_state_dict(state)
+    return model.to(device).eval()

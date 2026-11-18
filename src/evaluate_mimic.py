@@ -24,7 +24,7 @@ from torch.utils.data import DataLoader
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from mimic_data import ACTIONS, VITALS, load_splits_mimic   # noqa: E402
-from model import WorldModel                                 # noqa: E402
+from model import load_world_model                           # noqa: E402
 
 UNITS = dict(HR="bpm", RR="/min", SpO2="%", MAP="mmHg", Temp="C")
 
@@ -47,9 +47,7 @@ def evaluate(npz, model_path, n_samples=50, batch_size=256, seed=0):
     torch.manual_seed(seed)
     datasets, stats = load_splits_mimic(npz)
     test = datasets["test"]
-    model = WorldModel(n_vitals=len(VITALS), n_actions=len(ACTIONS))
-    model.load_state_dict(torch.load(model_path, map_location="cpu"))
-    model.eval()
+    model = load_world_model(model_path, len(VITALS), len(ACTIONS))
     std = torch.tensor(stats["std"], dtype=torch.float32)            # (V,) z-units -> original units
     V = len(VITALS)
     sums = {k: dict(n=torch.zeros(V), abs=torch.zeros(V), sq=torch.zeros(V), inside=torch.zeros(V))

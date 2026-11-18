@@ -33,7 +33,7 @@ import ablate_mimic               # noqa: E402
 import imagine_mimic              # noqa: E402
 import mimic_data                 # noqa: E402
 import train as T                 # noqa: E402
-from model import WorldModel      # noqa: E402
+from model import load_world_model  # noqa: E402
 
 K_MMHG = 100.0                    # mmHg per mcg/kg/min
 TAU_H = 1.0                       # hours
@@ -66,9 +66,7 @@ def injected_effect(dose, hours, k=K_MMHG, tau=TAU_H):
 
 
 def load_model(path, device):
-    model = WorldModel(n_vitals=len(mimic_data.VITALS), n_actions=len(mimic_data.ACTIONS))
-    model.load_state_dict(torch.load(path, map_location="cpu"))
-    return model.to(device).eval()
+    return load_world_model(path, len(mimic_data.VITALS), len(mimic_data.ACTIONS), device)
 
 
 def plot_effects(res, path):

@@ -28,7 +28,7 @@ import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from mimic_data import ACTIONS, VITALS, load_splits_mimic   # noqa: E402
-from model import WorldModel                                 # noqa: E402
+from model import load_world_model                           # noqa: E402
 
 VARIANTS = ("real", "all_zero", "shuffled", "nee_zero")
 SUBSETS = ("all_hours", "nee_active_hours")
@@ -55,9 +55,7 @@ def run(npz, model_path, device="cpu", batch_size=256, seed=0):
     torch.manual_seed(seed)
     datasets, stats = load_splits_mimic(npz)
     test = datasets["test"]
-    model = WorldModel(n_vitals=len(VITALS), n_actions=len(ACTIONS))
-    model.load_state_dict(torch.load(model_path, map_location="cpu"))
-    model.to(device).eval()
+    model = load_world_model(model_path, len(VITALS), len(ACTIONS), device)
     std = torch.tensor(stats["std"], dtype=torch.float32, device=device)     # (V,)
     cols = {v: VITALS.index(v) for v in REPORT_VITALS}
     perm = torch.randperm(len(test), generator=torch.Generator().manual_seed(seed))
@@ -96,8 +94,8 @@ def run(npz, model_path, device="cpu", batch_size=256, seed=0):
             a_t = a_real[:, :-1]
             a0, a1 = a_t.clone(), a_t.clone()
             a0[..., NEE], a1[..., NEE] = 0.0, DOSE
-            mu0, ls0 = model.prior(torch.cat([h, a0], -1))                    # (B, T-1, Z)
-            mu1, _ = model.prior(torch.cat([h, a1], -1))
+            mu0, ls0 = model.prior_from(h, a0)                                # (B, T-1, Z)
+            mu1, _ = model.prior_from(h, a1)
             m0, _ = model.decoder(torch.cat([mu0, h], -1))                    # (B, T-1, V)
             m1, _ = model.decoder(torch.cat([mu1, h], -1))
             v = base["valid"][:, 1:].bool()                                   # positions with a real next hour

@@ -33,7 +33,7 @@ import torch                      # noqa: E402
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from evaluate_mimic import carry_forward                    # noqa: E402
 from mimic_data import ACTIONS, VITALS, load_splits_mimic   # noqa: E402
-from model import WorldModel                                 # noqa: E402
+from model import load_world_model                           # noqa: E402
 from rollout import imagine                                  # noqa: E402
 
 N_SAMPLES = 50
@@ -228,9 +228,7 @@ def run(npz, model_path, out_dir, device="cpu", b_vital="MAP", b_limit=MAP_LIMIT
     torch.manual_seed(0)
     datasets, stats = load_splits_mimic(npz)
     test = datasets["test"]
-    model = WorldModel(n_vitals=len(VITALS), n_actions=len(ACTIONS))
-    model.load_state_dict(torch.load(model_path, map_location="cpu"))
-    model.to(device).eval()
+    model = load_world_model(model_path, len(VITALS), len(ACTIONS), device)
 
     nee_train = datasets["train"].a[..., NEE][datasets["train"].valid > 0]
     nonzero = nee_train[nee_train > 0]
