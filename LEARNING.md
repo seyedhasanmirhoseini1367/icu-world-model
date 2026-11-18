@@ -385,6 +385,43 @@ extraction, then 120 epochs of about 113 seconds each.
   These are probably unit or charting errors; the extraction should cap or drop them
   before the model is trusted on dose effects.
 
+**Evaluation on the test split.** [`src/evaluate_mimic.py`](src/evaluate_mimic.py), run
+as a separate evaluation-only Kaggle job on the 13,894 test stays (no retraining). Only
+hours where the vital was measured *and* had been measured before are scored, so all
+three methods are compared on exactly the same hours. Three ways to "predict" hour `t+1`:
+
+- **Prior** (a real forecast): `z` set to the prior mean, from hours `0..t` and the
+  action at `t`; band from 50 samples.
+- **Naive baseline**: next hour = the last measured value. In the ICU this is hard to
+  beat, because most vitals change little from one hour to the next.
+- **Posterior** (not a forecast): `z` from the posterior, which has seen hour `t+1`.
+  It shows how much the latent could carry if the model knew the answer.
+
+| Vital | Scored hours | Prior MAE / RMSE | Naive MAE / RMSE | Prior gain (MAE) | Inside prior 10-90% band | Posterior MAE / RMSE | Inside posterior band |
+|---|---|---|---|---|---|---|---|
+| HR (bpm) | 482,395 | 5.16 / 7.70 | 5.53 / 8.43 | 7% | 78.1% | 3.59 / 5.22 | 90.3% |
+| RR (/min) | 475,412 | 2.82 / 3.99 | 3.40 / 4.93 | 17% | 77.1% | 0.44 / 0.62 | 99.9% |
+| SpO2 (%) | 472,688 | 1.35 / 2.14 | 1.53 / 2.53 | 12% | 78.2% | 0.07 / 0.17 | 100.0% |
+| MAP (mmHg) | 450,613 | 7.02 / 10.06 | 8.33 / 12.25 | 16% | 79.2% | 6.22 / 8.78 | 83.1% |
+| Temp (C) | 137,176 | 0.27 / 0.39 | 0.30 / 0.45 | 10% | 78.7% | 0.26 / 0.38 | 79.0% |
+
+(MAE = mean absolute error, the typical size of a miss; RMSE = root mean squared error,
+which weighs large misses more.)
+
+What it shows:
+- **The forecast beats "last value" on every vital, modestly.** MAE is 7-17% lower and
+  RMSE 9-19% lower. The gain is largest for RR and MAP, smallest for HR.
+- **The bands are honest.** 77-79% of measurements fall inside the 10-90% band, close
+  to the 80% it should hold; the bands are only slightly too narrow.
+- **The latent is spent on RR and SpO2, not on MAP.** With the posterior, RR and SpO2
+  become almost exact (0.44 breaths/min and 0.07%), HR improves somewhat, MAP only a
+  little (7.02 to 6.22 mmHg) and temperature not at all. So most of the 2.6 nats per hour
+  that `z` carries describes RR and SpO2. For the vasopressor question, the vital that
+  matters (MAP) gets the least of the latent's capacity. The loss rewards whatever is
+  cheapest to encode, not what is clinically important.
+- **This is still not a causal test.** Like Stage 4 in the simulator, one-step accuracy
+  says nothing about whether the model has learned what vasopressors do to MAP.
+
 **What it teaches.**
 - **Most of the work in real data is deciding what an "action" is.** The simulator gave
   us `u` and `f` for free. In MIMIC we had to choose units, convert between drugs,
