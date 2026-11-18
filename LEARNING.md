@@ -465,6 +465,105 @@ what the model predicts when you *change* the dose.
 
 ---
 
+## Stage 8 (MIMIC) - Imagination and a vasopressor check on real data
+
+**What we did.** [`src/imagine_mimic.py`](src/imagine_mimic.py), run as an
+evaluation-only Kaggle GPU job with the cleaned-run model: no training, nothing changed
+in the model. Only aggregate numbers and figures left Kaggle; the extracted hourly data
+was kept in a temporary folder and deleted.
+
+### Part A - How well does imagination track real stays?
+
+For every test stay that lasted long enough, we took the real history up to hour 12 or
+hour 24 (19,990 windows) and let the model imagine the next 12 hours from the prior
+alone, feeding in the **real actions** that were given. This is the Stage 5 rollout,
+but checked against what was actually measured. The point prediction is the median of
+50 imagined samples; the naive baseline repeats the last measured value.
+
+| Horizon | MAP: model / naive MAE (mmHg) | MAP band coverage | HR: model / naive MAE (bpm) | HR band coverage |
+|---|---|---|---|---|
+| +1 h | 6.94 / 8.09 | 78% | 5.10 / 5.37 | 78% |
+| +3 h | 7.82 / 9.44 | 78% | 6.68 / 7.19 | 77% |
+| +6 h | 8.25 / 10.10 | 78% | 7.95 / 8.62 | 77% |
+| +12 h | 9.02 / 11.05 | 77% | 9.34 / 10.38 | 78% |
+
+([Error vs horizon](outputs/figures/mimic_imagination_error.png))
+
+- **The model beats the naive baseline at every horizon**, by 14-18% for MAP and 5-10%
+  for HR, and the gap does not shrink with the horizon.
+- **Its uncertainty stays honest.** The 10-90% band covers 77-78% of measurements at
+  every horizon, even 12 hours out: the band widens as fast as the errors grow.
+- **Errors still grow with the horizon**, from 6.9 to 9.0 mmHg for MAP: imagination
+  compounds, as in Stage 5.
+- **One caveat in the method:** imagined hours are fed back as if every vital had been
+  measured (mask = 1). Real temperature is measured only every few hours, so later
+  imagined hours look slightly unlike anything the model saw in training.
+
+### Part B - Does a vasopressor raise imagined MAP?
+
+We picked **6,413 test moments**: the first hour in a stay where MAP was measured below
+65 mmHg and no vasopressor had been given yet. From the same history the model imagined
+6 hours twice, once with no vasopressor and once with a norepinephrine-equivalent dose
+of 0.1 mcg/kg/min, with fluids and ventilation as they really were. Both plans used the
+same random numbers, so their difference is caused by the plan alone. A dose of 0.1 is
+typical for this data: the median non-zero dose in training is 0.08, and 56% of
+treated hours are at or below 0.1.
+
+| Hours after the decision | Imagined MAP difference, dose minus none | Spread across the 50 samples (SD) | Across patients: SD, 10-90% | Moments with a positive difference |
+|---|---|---|---|---|
+| +1 h | +0.12 mmHg | 0.13 | 0.06, +0.06 to +0.19 | 99% |
+| +3 h | +0.22 mmHg | 0.30 | 0.13, +0.06 to +0.37 | 95% |
+| +6 h | +0.06 mmHg | 0.36 | 0.16, -0.13 to +0.26 | 66% |
+
+The naive observational comparison on the same moments: 258 started a vasopressor in
+that hour, 6,155 did not.
+
+| Hour | Measured MAP, started | Measured MAP, not started | Difference |
+|---|---|---|---|
+| +0 (decision hour) | 58.4 | 59.5 | -1.1 |
+| +1 | 69.4 | 69.0 | +0.4 |
+| +3 | 69.9 | 71.3 | -1.3 |
+| +6 | 71.1 | 72.3 | -1.3 |
+
+([Imagined vs observed difference](outputs/figures/mimic_vasopressor_counterfactual.png))
+
+**Is the sign right?** Mostly, but only just. The imagined difference is positive at
+1 and 3 hours in almost every moment (99% and 95%) and fades to a coin flip by 6 hours
+(66% positive, 10-90% range crossing zero).
+
+**Is the size plausible?** No. A rise of about 0.1-0.2 mmHg is far too small to be
+the effect of starting a vasopressor; it is smaller than the noise of a single blood
+pressure reading. In practice, **the model predicts that starting a vasopressor
+changes almost nothing.** We make no claim about the true size, only that this one
+is not believable.
+
+**Why, and what the observational numbers show.**
+- **Confounding is visible.** Patients who got a vasopressor already had lower MAP
+  (58.4 vs 59.5) and stayed lower 3 and 6 hours later. Taken at face value, the data says
+  "vasopressors slightly lower MAP", the same trap as the simulated policy data in
+  Stage 1, where the raw difference was -4.5 mmHg against a true +3.0.
+- **MAP is titrated to a target.** Clinicians adjust the dose to keep MAP near 65, so
+  in the data a higher dose goes with a patient who needs more, not with higher MAP.
+  Unlike our simulated clinician, they also decide from things not in our tables
+  (lactate, urine output, how the patient looks), so conditioning on the history cannot
+  remove the confounding. That is **unmeasured confounding**: a driver of both
+  treatment and outcome that the model never sees.
+- **Weak positivity.** Only 258 of 6,413 hypotensive moments (4%) started a
+  vasopressor in that hour. The model has few comparable "treated" examples.
+- **Both groups rise by about 10 mmHg** after the decision hour (from about 59 to
+  about 69). That is mostly **regression to the mean**: the moments were selected
+  because one reading was low, and the next reading is usually closer to the patient's
+  normal. It is not a treatment effect, and it is a reason never to read raw
+  before/after changes as effects.
+
+**What it teaches.** On real data the model is a good forecaster under the care that
+was given (Part A) and, at the same time, has learned almost nothing about what a
+vasopressor does (Part B). That is the central lesson of the simulator, now on real
+patients: predictive accuracy and causal knowledge are different things, and only
+the second one answers "what if I treat?".
+
+---
+
 ## Stage 8 - What we learned
 
 ### The main lessons

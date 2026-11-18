@@ -202,14 +202,14 @@ def plot_b(res, path):
         ax.fill_between(h, [0] + res["moment_p10"], [0] + res["moment_p90"], alpha=0.2,
                         label="10-90% across patients")
         ax.plot(h, mean, "o-", label=f"imagined: NEE {res['dose']} minus NEE 0 (mean, n={res['n_moments']})")
-        by = res["observational"]["by_hour"]                                    # {hour: {...}}
-        hs = [h for h, r in by.items() if r["started"] is not None and r["not_started"] is not None]
+        by = {int(h): r for h, r in res["observational"]["by_hour"].items()}   # JSON makes keys text
+        hs = [h for h, r in sorted(by.items()) if r["started"] is not None and r["not_started"] is not None]
         ax.plot(hs, [by[h]["started"] - by[h]["not_started"] for h in hs], "s--", color="tab:red",
                 label="observed: started NEE minus not started")
     ax.axhline(0, color="0.5", lw=0.8)
     ax.set_xlabel("hours after the decision hour")
     ax.set_ylabel("MAP difference (mmHg)")
-    ax.set_title("Vasopressor counterfactual vs observational difference (MAP < 65, untreated so far)")
+    ax.set_title("Starting a vasopressor at MAP < 65: imagined vs observed")
     ax.legend(fontsize=8)
     fig.tight_layout()
     fig.savefig(path, dpi=110)
