@@ -564,6 +564,87 @@ the second one answers "what if I treat?".
 
 ---
 
+## Stage 9 (diagnosis) - Does the model use the actions at all?
+
+**What we did.** [`src/ablate_mimic.py`](src/ablate_mimic.py), again an evaluation-only
+Kaggle GPU job with the cleaned-run model, no training and no change to the model. An
+**ablation** means removing or scrambling one input and measuring how much worse the
+model gets: if the error barely changes, the model was not relying on that input.
+
+We repeated the one-step prior forecast from Stage 7 on the test split (13,894 stays)
+under four action inputs. Actions enter the model twice (the previous action in each
+hour's token, the current action in the prior), and every variant changed both:
+
+1. **real**: the actions that were given;
+2. **all zero**: every action set to 0;
+3. **shuffled**: each stay gets the actions of another test stay, so the doses are
+   realistic but belong to someone else;
+4. **NEE zero**: only the vasopressor removed, fluids and ventilation real.
+
+Errors are reported on all scored hours, and separately on the 79,530 "NEE-active"
+predictions, where a vasopressor was running or its dose had just changed: the hours
+where the vasopressor should matter most.
+
+| Action input | MAP MAE, all hours | HR MAE, all hours | MAP MAE, NEE-active | HR MAE, NEE-active |
+|---|---|---|---|---|
+| real | 7.061 mmHg | 5.200 bpm | 6.499 mmHg | 4.893 bpm |
+| all zero | 7.072 (+0.2%) | 5.217 (+0.3%) | 6.532 (+0.5%) | 4.945 (+1.1%) |
+| shuffled | 7.083 (+0.3%) | 5.222 (+0.4%) | 6.530 (+0.5%) | 4.936 (+0.9%) |
+| NEE zero | 7.064 (+0.0%) | 5.202 (+0.0%) | 6.513 (+0.2%) | 4.904 (+0.2%) |
+
+(454,351 MAP and 485,849 HR scored hours overall; 73,611 and 77,541 NEE-active.)
+
+**How far does the vasopressor move the latent?** With each real history fixed, we set
+the current vasopressor to 0 and then to 0.1 mcg/kg/min and measured how far the
+prior's mean of `z` moved (519,034 hour positions). For scale, we compare it with how
+much that mean normally varies from hour to hour and patient to patient (its standard
+deviation), and with the prior's own spread (sigma).
+
+| Latent dim | Shift for NEE 0 to 0.1 | Normal variation of the prior mean | Prior sigma |
+|---|---|---|---|
+| 1 (used) | 0.012 | 0.256 | 0.91 |
+| 2 (used) | 0.034 | 1.627 | 1.89 |
+| 3 (used) | 0.013 | 0.082 | 0.55 |
+| 0, 4-7 (unused) | 0.0001-0.0002 | 0.0007-0.0022 | about 0.17 |
+
+Overall, the prior mean moves 0.041 (as a distance across all 8 dims), against a typical
+spread of 1.65: about **2.5%**. In the three dimensions the model actually uses, the
+shift is 2-16% of their normal variation and 1-2% of the prior's own sigma. Decoded into
+blood pressure, the shift changes the predicted MAP for the next hour by **+0.07 mmHg**
+on average, consistent with the +0.12 mmHg after one hour in Stage 8.
+
+**The answer: barely.** The model uses the actions a little, and the vasopressor
+almost not at all.
+- Throwing away *all* actions, or giving every stay someone else's, makes the forecast
+  worse by only 0.2-0.4% overall and about 1% in the hours where a vasopressor is
+  running. That is a real but tiny dependence.
+- Removing only the vasopressor changes nothing overall and 0.2% in NEE-active hours.
+  The small benefit the actions do bring comes mostly from fluids and ventilation, or
+  from actions as markers of how sick the patient is, not from the vasopressor dose.
+- The vasopressor nudges the latent by a few percent of its normal range, and in the
+  right direction (MAP up), but by an amount that is clinically meaningless.
+
+**Why might that be?** These are hypotheses that this diagnostic cannot separate:
+- **The history already contains the information.** Doses are adjusted to the
+  measured MAP, so the dose at hour `t` is largely predictable from the vitals up to
+  `t`. For one-hour prediction, the action adds almost nothing the model does not
+  already know. A model trained only to predict well has no reason to learn a separate
+  "drug effect".
+- **Confounding and weak positivity** (Stage 8): in the data, starting a vasopressor
+  goes with patients who stay low, so the drug's true effect and the patients' severity
+  pull in opposite directions and largely cancel.
+- **The way actions enter the model is weak.** Each action is a single raw number (for
+  NEE mostly between 0.02 and 0.35) added through a linear layer into a 64-number token,
+  or appended as 3 of 67 inputs to the prior. Nothing in the architecture or the loss
+  forces the latent to depend on the action.
+
+**What it teaches.** "Action-conditioned" describes the model's inputs, not what it
+learned. A world model can take actions as input and still largely ignore them, while
+forecasting well. Before asking a world model "what if?", check that its predictions
+change when the action changes. An ablation like this one is the cheapest such check.
+
+---
+
 ## Stage 8 - What we learned
 
 ### The main lessons
