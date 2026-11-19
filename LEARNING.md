@@ -1990,6 +1990,45 @@ should be pre-registered with the per-hour-group KL, not the average; more seeds
 
 ---
 
+## Main finding so far (Stages 12-13c)
+
+**In one sentence:** models that fit the hours just after a vasopressor start reproduce the
+hidden confounding; models that do not fit those hours look unbiased only because they
+underfit them.
+
+The test bed is the Stage 12b data: a planted drug effect (+1.90 mmHg at 1 h) plus a hidden
+"sicker patients get the drug" drop that starts the hour after a start. A model that learned
+the data perfectly would report about −13.1 mmHg at 1 h (true effect + bias of −15).
+
+| Model | Fits the post-start hour? (share of the 12b drop captured) | Hour-1 confounding shift (G = 15 minus G = 0; full bias −15) |
+|---|---|---|
+| act_now (current default, Stage 12b) | no (about 2%) | −0.34 |
+| act_delta (Stage 13) | no (13%) | −0.73 |
+| 13b: start hours weighted 10x | yes (64%) | −8.47 |
+| 13c: beta lowered to 0.9, no weighting | yes (68%) | −10.73 |
+
+- The two models that fit the post-start hour got there in **different ways** (start
+  weighting in 13b, a lower KL weight in 13c), and both picked up most of the hidden
+  confounding. The models that looked unbiased did so because their one-step prediction
+  barely moved after a start: they were not right, they were not fitting that part of the data.
+- **Lesson:** a world model that "shows no confounding bias" may simply be underfitting the
+  hours where the confounding lives. A better fit to observational data cannot remove hidden
+  confounding; it reproduces it.
+
+**A key sensitivity: beta near 1.** Lowering the KL weight from 1.0 to 0.9 moved the
+validation KL from about 2.7 to about 14 nats per hour (Stage 13c). The decoder's MAP sigma
+fell from about 7 mmHg to about 0.13 mmHg, and the model went from not fitting the post-start
+hour to fitting it. So whether this model looks unbiased can depend on a small change in one
+hyperparameter. Any comparison between designs must hold beta (and the resulting KL) fixed,
+or report it.
+
+**Limits.** Every result above is **one seed per model** (seed 0). The Stage 10b noise floor
+(seed 1 minus seed 0) is small for the default design, but it was not measured for the 13b
+and 13c models. The 13c verdict itself is inconclusive by its pre-set rules (the control's KL
+overshot the target); the table uses its numbers as an exploratory comparison.
+
+---
+
 ## Stage 8 - What we learned
 
 ### The main lessons
