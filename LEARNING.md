@@ -1297,6 +1297,74 @@ better would be biased by up to −15 mmHg, as the raw data and the formula agre
 
 ---
 
+## Negative control: does the real-data model "see" a drug effect on temperature?
+
+**The idea.** A **negative control outcome** is something the treatment should not affect.
+If a model nevertheless shows an "effect" on it, that effect must come from somewhere else:
+most likely from **confounding** absorbed in training (sicker patients get the drug *and*
+have different temperatures), not from the drug.
+- Norepinephrine has about no direct effect on body temperature.
+- So we reran the Stage 8 Part B counterfactual on the real-data model and looked at
+  **every** vital, not only MAP.
+- The setup is unchanged: the 6,413 moments, NEE 0.1 vs 0 for 6 h, other actions real, 50
+  paired samples per arm.
+
+The noise floor is the same paired difference between the two real-data models trained with
+seeds 0 and 1. The original pre-Stage 11 model is shown as a check. Evaluation only.
+
+**Imagined effect, NEE 0.1 minus 0** (default model, seed 0; mean, with the 10–90% range
+across patients at 6 h):
+
+| Vital | 1 h | 3 h | 6 h | 10–90% at 6 h | noise floor 10–90% at 6 h |
+|---|---|---|---|---|---|
+| Temp (°C) | +0.001 | −0.000 | −0.002 | −0.014 .. +0.008 | −0.012 .. +0.019 |
+| SpO2 (%) | +0.04 | +0.08 | +0.13 | +0.04 .. +0.24 | −0.07 .. +0.07 |
+| RR (/min) | +0.00 | +0.07 | +0.07 | −0.08 .. +0.21 | −0.10 .. +0.06 |
+| HR (bpm) | +0.12 | +0.19 | +0.11 | −0.30 .. +0.50 | −0.06 .. +0.43 |
+| MAP (mmHg) | +0.16 | +0.21 | −0.08 | −0.47 .. +0.27 | −0.07 .. +0.40 |
+
+The MAP row is identical to Stage 11's Part B for this model, as it should be. The original
+model gives the same picture (Temp −0.009 °C at 6 h).
+
+**Raw observed difference** on the same moments: measured value at `t + h` for the 258
+moments that started the vasopressor at `t`, minus the 6,155 that did not.
+
+| Vital | h = 0 | h = 1 | h = 3 | h = 6 |
+|---|---|---|---|---|
+| Temp (°C) | −0.27 | −0.28 | −0.16 | +0.05 |
+| SpO2 (%) | +0.94 | +1.29 | +0.84 | +1.04 |
+| RR (/min) | −0.33 | −0.19 | −0.04 | +0.13 |
+| HR (bpm) | +3.85 | +3.26 | +3.12 | +2.86 |
+| MAP (mmHg) | −1.07 | +0.41 | −1.34 | −1.29 |
+
+Temperature is measured rarely: about 100 of the 258 started moments have a reading in each
+of these hours.
+
+**Reading it.**
+- **Temp: no effect, beyond the noise floor or otherwise.** The imagined change is a few
+  thousandths of a degree, inside the noise floor at every hour, by both criteria (the whole
+  10–90% range, or only the mean, outside the noise floor's range).
+- **The raw data does differ, already at h = 0.** At the decision hour the drug can't have
+  acted yet, but patients who get it are 0.27 °C cooler, with HR 3.9 bpm higher and SpO2
+  0.9% higher. That is **selection** (who gets treated), i.e. confounding. The model did not
+  turn it into an imagined drug effect.
+- **SpO2 and RR** have imagined means slightly outside the noise floor's range: +0.13% and
+  +0.07/min at 6 h. These pass only the loose criterion, never the strict one, and are
+  clinically irrelevant.
+
+**What the negative control can and cannot tell us here.**
+- A negative control can only reveal absorbed confounding if the model responds to the action
+  at all.
+- The real-data model barely does, for any vital: Stage 9 showed this, and the MAP row above
+  is within a few tenths of zero.
+- So "no effect on temperature" is **consistent with** the model ignoring the vasopressor
+  altogether. It is not evidence that the model separated drug from confounding.
+- The check becomes informative for a model that *does* respond to actions. Stage 13's
+  act_delta model is the obvious candidate: if it shows an imagined temperature "effect", the
+  confounding has entered through the action path.
+
+---
+
 ## Stage 13 - Let the model see a start: does it then become biased?
 
 ### The hypothesis, written before running anything
