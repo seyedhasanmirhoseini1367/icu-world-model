@@ -1297,6 +1297,55 @@ better would be biased by up to −15 mmHg, as the raw data and the formula agre
 
 ---
 
+## Stage 13 - Let the model see a start: does it then become biased?
+
+### The hypothesis, written before running anything
+
+> **If the model is made able to predict the hour after a vasopressor start, it will become
+> biased under hidden confounding.**
+
+Stage 12b showed that the model was unbiased only because its one-step prediction barely
+reacts to a start. A start is "dose now > 0 *and* dose an hour ago = 0". The current-action
+path `act_now(a_t)` sees only the current dose; the previous dose is buried in `h_t`.
+
+**The one change.** The input of `act_now` becomes `[a_t, a_t - a_{t-1}]`: 6 numbers
+instead of 3. The second half is the change in each action since the hour before, so a
+start (or a stop) is visible directly. Nothing else changes: same layers, decoder, loss,
+hyperparameters and seed. The option is a flag (`act_delta=True`); the default stays as in
+Stage 12.
+
+**Training.** The new design is trained on three datasets:
+- K = 30, G = 0 (the drug only, the same data as Stage 12's G = 0);
+- Stage 12b, G = 15 (the hidden confounder);
+- real data (K = 0).
+
+The real-data model is needed for the one-step error on real data, and it is this design's
+own reference for "learned effect".
+
+**What we will measure.**
+1. **Hour-1 fit at starts.** Around real vasopressor starts in the test split (−3 .. +3 h),
+   compare the mean measured change of MAP into each hour with the mean change the one-step
+   prior predicts. This is done for the current models and the new ones.
+2. **K = 30, G = 0:** hour-1 and 6-h recovery, new vs current (18% / 85%). Does it fix hour 1?
+3. **12b, G = 15:** the learned effect at 1 / 3 / 6 h against the true effect (+1.90 / +2.85 /
+   +2.99) and against the observational prediction (true − 15.00 / − 9.10 / − 4.30, the red
+   line). Does it move toward the red line?
+4. **One-step MAP error on real data**, new vs current (MAE 7.014 mmHg).
+
+**How the verdict will be decided** (fixed now). The **confounding shift** is the learned
+effect at G = 15 minus the learned effect at G = 0, both with the new design, at hour 1.
+The prediction for a model that fits the data is −15.00 mmHg; the current design gave −0.34.
+- **Confirmed:** the new design captures at least half of the measured drop in the hour after
+  a start (the step 1 check on the G = 15 data), *and* the confounding shift is −7.5 mmHg or
+  more negative (at least half of the predicted bias).
+- **Partly:** either one of these holds, or the shift is between −1.5 and −7.5 mmHg (10–50%
+  of the predicted bias).
+- **Rejected:** the shift stays above −1.5 mmHg (less than 10% of the predicted bias).
+
+*Results: added after the run, below.*
+
+---
+
 ## Stage 8 - What we learned
 
 ### The main lessons
