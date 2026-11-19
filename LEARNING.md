@@ -1549,6 +1549,73 @@ against the hypothesis, when the test never happened.
 
 ---
 
+## Stage 13b - Force the model to fit the hours after a start
+
+### Pre-registration (written and committed before running anything)
+
+**Step 1 - diagnostic, evaluation only.** Models:
+- the current design (act_now) and the Stage 13 act_delta design;
+- each on K = 30 (G = 0) and on 12b G = 15 data;
+- test split.
+
+The three questions:
+- **a) Does the model widen its uncertainty at starts instead of predicting the drop?**
+  - We compare the hours just after a start (start hour +1 and +2) with all other valid
+    hours.
+  - For each group we report the mean predicted sigma for MAP in mmHg: the decoder's sigma
+    at the prior mean, and the spread of 50 samples (z from the prior, then a decoder
+    sample).
+  - We also report the mean KL and the mean residual: measured minus predicted MAP.
+- **b) Does a different point prediction explain the Stage 13 gap?**
+  - We redo the Stage 13 start-fit with the point prediction taken as the mean of 50
+    samples, instead of the decoder output at the prior mean.
+  - The gap: hour-1 recovery was 54–72% in the counterfactual, but the drug part of the
+    change in the hour after real starts was only +0.08 predicted vs +1.20 mmHg measured.
+- **c) Are real start hours a different population from the 6,413 Part B moments?**
+  - We compare the mean MAP trend over the 3 hours before, the MAP level, earlier
+    vasopressor use and the starting dose.
+
+**Gate for Step 2** (numeric version of "only if 1a shows sigma widening or clear
+underfit"). Stage 13b trains if, for either 12b G = 15 model (current or act_delta), at
+start hour +1:
+- the 50-sample predictive spread of MAP is at least **1.2×** its mean over other hours
+  (*sigma widening*); or
+- the mean residual (measured − predicted MAP) is **−5 mmHg or lower** (*clear underfit*:
+  the model misses at least a third of the roughly 14 mmHg drop).
+
+Otherwise Step 2 is skipped and only Step 1 is reported.
+
+**Step 2 - hypothesis.**
+
+> **If the model is forced to fit the hours after a start, it will recover the hour-1 drug
+> effect at K = 30 and become biased toward the observational line under 12b G = 15.**
+
+**The one change from act_delta.** In the training loss, the reconstruction term of the
+hours just after a start (start hour +1 and +2) gets **weight 10**; all other hours keep
+weight 1. A start is an hour with NEE > 0 and NEE = 0 the hour before. The KL term,
+architecture, hyperparameters and seed 0 stay the same. Validation, and therefore early
+stopping, uses the same weighted loss. Evaluation uses the plain model; the weights exist
+only during training.
+
+We train this on K = 30 (G = 0), 12b G = 15 and real data.
+
+**Verdict rules.**
+- **(i) Fit:** the start-fit captures **at least 50%** of the 12b post-start drop. This is
+  the same measure as Stage 13: the predicted change at start hour +1 on G = 15 data minus
+  that on K = 30 data, divided by the same measured difference (14.38 mmHg). The point
+  prediction is the decoder output at the prior mean; the 50-sample version is reported too.
+- **(ii) Bias:** the 12b G = 15 learned hour-1 effect (vs the current real-data model,
+  paired, as in Stage 13) moves at least **30%** of the way from the true effect +1.90
+  toward the observational prediction −13.10. That means it must be **−2.60 mmHg or
+  lower**.
+- **Confirmed:** both (i) and (ii) hold.
+- **Partly:** exactly one holds.
+- **Rejected:** neither holds.
+
+*Results: added after the run, below.*
+
+---
+
 ## Stage 8 - What we learned
 
 ### The main lessons
