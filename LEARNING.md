@@ -817,8 +817,7 @@ seeds would also differ somewhat, and we haven't measured by how much on MIMIC. 
 0.6–0.7 mmHg from hour 3 onward is more convincing, but it has not been tested against
 that noise either. The clean control would be a "K = 0" run: retrain on the unmodified
 data with another seed and measure the same paired difference. That gives the noise
-floor any recovered effect has to beat. It needs new training, so we haven't done it
-yet.
+floor any recovered effect has to beat. We did this next; see "The noise floor" below.
 
 **What it teaches.**
 - On a clean, planted effect the architecture is fairly sensitive: about 1 mmHg per
@@ -828,8 +827,236 @@ yet.
 - Two things still point at the model: the weak first hour, and the missing 15–30% at
   steady state.
 - "Clearly distinguishable" is only as good as the noise you compare against.
-  Patient-to-patient spread is one kind of noise. Training-run spread is another, and
-  it is still unmeasured.
+  Patient-to-patient spread is one kind of noise. Training-run spread is another; the
+  next part measures it.
+
+### Stage 10b, continued - The noise floor: how different are two training runs?
+
+**The question.** Train the same model twice on the *same* real data and change only
+the **seed**, the number that sets the random starting weights and the order of the
+batches. How different is the vasopressor effect the two models imagine? Any
+"recovered" effect smaller than this difference could just be the luck of training.
+That difference is the **noise floor**.
+
+**What we did.**
+- We trained the original model again on the unmodified MIMIC data (K = 0) with seed 1.
+  Everything else matched the existing seed-0 model.
+- On the same 6,413 moments, with the same random numbers, we took the imagined effect
+  (NEE 0.1 minus 0) of the seed-1 model minus that of the seed-0 model, paired per
+  moment.
+- Training: the seed-1 model kept epoch 112 of 127, at about 12.5 s per epoch.
+
+| hour | noise floor, mean | 10–90% across patients |
+|---|---|---|
+| 1 | −0.01 | −0.09 .. +0.06 |
+| 3 | −0.19 | −0.34 .. −0.03 |
+| 6 | −0.35 | −0.54 .. −0.15 |
+
+All values are mmHg of MAP.
+
+Two models trained on identical data disagree about the drug's effect by up to about
+0.35 mmHg on average at 6 hours. They also disagree *systematically*: seed 1 imagines a
+smaller effect than seed 0 for almost every patient. Seen alone, the real-data effect
+looks like +0.12 / +0.22 / +0.06 mmHg at 1 / 3 / 6 h with seed 0. With seed 1 it is
++0.10 / +0.03 / −0.29. That is the same model on the same data, and even the sign
+changes. So **the real-data vasopressor effect is indistinguishable from zero**.
+
+**The criterion against the noise floor**, fixed before we saw the numbers. A recovered
+effect *clearly exceeds* the noise floor at an hour if its whole 10–90% range lies
+above the noise floor's 90th percentile. A looser version only asks that the recovered
+*mean* lies above that 90th percentile.
+
+**The Stage 10b table again, with the noise floor** (original model):
+
+| K | hour | injected | recovered (10–90%) | noise floor 90th pct | clearly above? (strict / mean) |
+|---|---|---|---|---|---|
+| 10 | 1 | 0.63 | 0.10 (+0.03 .. +0.17) | +0.06 | **no** / yes |
+| 10 | 3 | 0.95 | 0.67 (+0.55 .. +0.78) | −0.03 | yes / yes |
+| 10 | 6 | 1.00 | 0.72 (+0.58 .. +0.85) | −0.15 | yes / yes |
+| 30 | 1 | 1.90 | 0.17 (+0.06 .. +0.29) | +0.06 | yes / yes |
+| 30 | 3 | 2.85 | 2.15 (+1.92 .. +2.38) | −0.03 | yes / yes |
+| 30 | 6 | 2.99 | 2.39 (+2.11 .. +2.69) | −0.15 | yes / yes |
+| 100 | 1 | 6.32 | 3.39 (+2.69 .. +4.19) | +0.06 | yes / yes |
+| 100 | 3 | 9.50 | 8.08 (+7.52 .. +8.68) | −0.03 | yes / yes |
+| 100 | 6 | 9.98 | 8.49 (+7.83 .. +9.21) | −0.15 | yes / yes |
+
+Recovered values and the noise-floor percentile are in mmHg. Part B on the old models
+was rerun inside the overnight job, and it reproduced the Stage 10b numbers exactly.
+
+**Reading it.**
+- Every cell clearly beats the noise floor except **K = 10 at hour 1**, where the
+  recovered 0.10 mmHg overlaps it.
+- So the earlier answer stands with one correction. **K = 10 is detected at hours 3 and
+  6, but not at hour 1.** The smallest K that clears the noise floor at 1, 3 *and* 6 h
+  is **K = 30**.
+- One caveat: the noise floor comes from a single pair of seeds. A third or fourth seed
+  would show how stable this 0.35 mmHg is.
+
+---
+
+## Stage 11 - Giving the current action its own path into the prior
+
+**The problem.** Stages 10 and 10b showed the weak spot. In the first hour after a dose
+change, the original model recovers only 54% of a strong effect (K = 100) and 9–15% of
+small ones. In the original model the current dose `a_t` enters the prior as **3 raw
+numbers** placed next to the 64 numbers of `h_t`. The prior's first layer can use them,
+but they are a tiny part of its input. Most of the effect arrives an hour later, after
+the dose has been written into the next token.
+
+**The change.** We added an **action embedding** for the current action:
+
+    act_now(a_t) = Linear(3 -> 64) -> GELU -> Linear(64 -> 64)
+
+- The prior now gets `[h_t, act_now(a_t)]` instead of `[h_t, a_t]`.
+- The posterior now gets `[h_t, act_now(a_t), x_{t+1}, mask_{t+1}]`.
+- The decoder is unchanged and still never sees the action. The token, which carries
+  the *previous* action, is unchanged too.
+- The variant is switched on by a flag (`WorldModel(act_now=True)`), off by default. The
+  original model and all its checkpoints are untouched.
+- An **embedding** here is a small learned network that turns the 3 action numbers into
+  64 numbers. The current dose then has as much room in the prior's input as the
+  patient summary `h_t`.
+
+**What we trained.** The variant used the same hyperparameters and seed 0 on four
+datasets: real data, K = 10, K = 30 and K = 100. We also trained it with seed 1 on real
+data, to get its own noise floor. Each epoch took about 13 s on a T4.
+
+| Variant run | Kept epoch | Of | Validation loss |
+|---|---|---|---|
+| real data (K = 0), seed 0 | 174 | 189 | 2.345 |
+| real data (K = 0), seed 1 | 178 | 193 | 2.343 |
+| K = 10 | 150 | 165 | 2.358 |
+| K = 30 | **56** | **71** | 2.400 |
+| K = 100 | 106 | 121 | 2.283 |
+
+The K = 30 run stopped much earlier than the others, and its validation loss is the
+highest, so it may be under-trained. Its numbers below should be read with that in
+mind. On real data the variant reaches a slightly lower validation loss than the
+original (2.345 vs 2.374 for the seed-1 original). It uses 3 of 8 latent dimensions,
+like the original.
+
+**a) One-step forecast on the real test split** (prior, 50 samples):
+
+| Vital | Naive MAE | Original MAE / RMSE / in 10–90% | Variant MAE / RMSE / in 10–90% |
+|---|---|---|---|
+| HR (bpm) | 5.53 | 5.145 / 7.671 / 77.8% | 5.144 / 7.657 / 77.9% |
+| RR (/min) | 3.40 | 2.819 / 3.985 / 77.0% | 2.814 / 3.991 / 76.6% |
+| SpO2 (%) | 1.53 | 1.349 / 2.139 / 79.1% | 1.346 / 2.128 / 77.7% |
+| MAP (mmHg) | 8.33 | 7.021 / 10.078 / 78.3% | 7.014 / 10.066 / 77.6% |
+| Temp (°C) | 0.30 | 0.266 / 0.390 / 80.1% | 0.265 / 0.389 / 78.6% |
+
+The forecast is essentially identical. The change neither helped nor hurt one-step
+accuracy, and coverage stays near the 80% it should be (a 10–90% band should contain
+80% of outcomes).
+
+**b) Semi-synthetic recovery, original vs variant** (each against its own real-data
+model):
+
+| K | hour | injected | original: recovered (share) | variant: recovered (share) | variant 10–90% |
+|---|---|---|---|---|---|
+| 10 | 1 | 0.63 | 0.10 (15%) | 0.08 (13%) | +0.02 .. +0.15 |
+| 10 | 3 | 0.95 | 0.67 (70%) | 0.65 (68%) | +0.54 .. +0.77 |
+| 10 | 6 | 1.00 | 0.72 (72%) | 0.70 (70%) | +0.55 .. +0.86 |
+| 30 | 1 | 1.90 | 0.17 (9%) | 0.33 (18%) | +0.21 .. +0.47 |
+| 30 | 3 | 2.85 | 2.15 (75%) | 2.19 (77%) | +1.93 .. +2.50 |
+| 30 | 6 | 2.99 | 2.39 (80%) | 2.53 (85%) | +2.24 .. +2.87 |
+| 100 | 1 | 6.32 | 3.39 (54%) | **7.07 (112%)** | +6.45 .. +7.77 |
+| 100 | 3 | 9.50 | 8.08 (85%) | **9.33 (98%)** | +8.81 .. +9.89 |
+| 100 | 6 | 9.98 | 8.49 (85%) | **9.61 (96%)** | +9.07 .. +10.19 |
+
+Effects are in mmHg.
+
+![Recovered vs injected, original vs variant](outputs/figures/stage11_recovery.png)
+
+- **The variant's noise floor** (seed 1 minus seed 0 on real data) is +0.07 / +0.11 /
+  +0.16 mmHg at 1 / 3 / 6 h. Its 90th percentile is +0.19 / +0.30 / +0.40.
+- Against its own noise floor, the variant passes in every cell except K = 10 at hour 1.
+  That is the same pattern as the original.
+
+**c) Real data: imagined NEE 0.1 minus 0** (6,413 moments):
+
+| Model | 1 h | 3 h | 6 h |
+|---|---|---|---|
+| original, seed 0 | +0.12 | +0.22 | +0.06 |
+| original, seed 1 | +0.10 | +0.03 | −0.29 |
+| variant, seed 0 | +0.16 | +0.21 | −0.08 |
+| variant, seed 1 | +0.23 | +0.32 | +0.08 |
+
+All values are mmHg.
+
+![Real data, original vs variant](outputs/figures/stage11_partb_real.png)
+
+All four are within a few tenths of a mmHg of zero, and they disagree in sign at 6 h.
+On real MIMIC data **no model, old or new, finds a vasopressor effect bigger than the
+noise between training runs**. That matches Stage 9: the change in architecture didn't
+create an effect the data doesn't support.
+
+**d) Action ablation on real data** (MAP MAE change vs real actions):
+
+| Action input | Original, all hours | Original, NEE-active hours | Variant, all hours | Variant, NEE-active hours |
+|---|---|---|---|---|
+| all zero | +0.2% | +0.5% | +0.2% | +0.6% |
+| shuffled | +0.3% | +0.5% | +0.3% | +0.6% |
+| NEE zero | +0.0% | +0.2% | +0.1% | +0.4% |
+
+The prior's sensitivity to the dose (NEE 0 to 0.1, real history fixed) is the size of
+the shift in `z`:
+- original: 0.041, against a typical spread of 1.65; decoded MAP +0.07 mmHg;
+- variant: 0.063, against a typical spread of 1.55; decoded MAP +0.04 mmHg.
+
+On real data the variant still barely uses the actions. This is what we expect if the
+data has no clear effect to learn.
+
+**Step 4 - a check on the vasopressor units (report only, no code change).** The
+extraction converts each vasopressor rate to norepinephrine-equivalent mcg/kg/min. It
+divides by weight for 'mcg/min', divides by 60 for 'units/hour', and otherwise
+multiplies by 1.0 (the "ELSE 1.0" branch). Rows per unit:
+
+| itemid | drug | unit | rows | goes to ELSE 1.0 | correct? |
+|---|---|---|---|---|---|
+| 221906 | norepinephrine | mcg/kg/min | 459,798 | yes | yes, already per kg per min |
+| 221906 | norepinephrine | mg/kg/min | 2 | yes | **no**, 1000× too small |
+| 221289 | epinephrine | mcg/kg/min | 31,495 | yes | yes |
+| 221662 | dopamine | mcg/kg/min | 18,085 | yes | yes |
+| 221749 | phenylephrine | mcg/kg/min | 209,372 | yes | yes |
+| 221749 | phenylephrine | mcg/min | 2 | no (÷ weight) | yes |
+| 222315 | vasopressin | units/hour | 37,160 | no (÷ 60) | yes |
+| 222315 | vasopressin | units/min | 3 | yes | yes, by coincidence |
+
+For vasopressin in units/min, multiplying by 1.0 is right: the factor of 2.5 is defined
+per unit per minute, and that is exactly what dividing units/hour by 60 recovers. Only
+**2 norepinephrine rows** out of about 756,000 vasopressor rows (labelled mg/kg/min) are
+converted wrongly, and they are almost certainly charting errors anyway. **The unit
+conversion is not a source of error worth fixing.**
+
+**What we learned in Stage 11.**
+- **The new path fixes the first hour for a strong effect.** At K = 100, hour-1
+  recovery went from 54% to 112% and steady-state recovery from 85% to 96%. The 112%
+  means the variant slightly *over*shoots at hour 1, by 0.75 mmHg. It now credits the
+  current dose directly, a little too eagerly.
+- **It does not help small effects.** At K = 10 hour 1 stays near 13–15% and steady
+  state near 70%. At K = 30 hour 1 doubles (9% to 18%) and steady state rises to 85%,
+  but that run may be under-trained.
+  - A likely reason, a hypothesis we haven't tested: at hour 1 a small effect is about
+    0.6 mmHg, against hour-to-hour MAP noise of about 7 mmHg. Modelling it barely
+    improves the likelihood, so the model has little reason to spend its latent budget
+    on it.
+- **Nothing else got worse.** The one-step forecast, coverage and the real-data
+  ablation are essentially unchanged.
+- **On real data the effect is still zero within the noise**, for both architectures
+  and both seeds. Together with Stages 9–10b, this settles the diagnosis from Stage 10:
+  the architecture had a real but limited weak spot (the first hour of a strong
+  effect), and the variant fixes it. The absent vasopressor effect on MIMIC is a
+  property of the data: confounding, titration and weak positivity. It is not a
+  property of the model.
+
+| | Original | act_now variant |
+|---|---|---|
+| Hour-1 recovery, K = 10 / 30 / 100 | 15% / 9% / 54% | 13% / 18% / 112% |
+| Steady-state (6 h) recovery, K = 10 / 30 / 100 | 72% / 80% / 85% | 70% / 85% / 96% |
+| One-step MAP error (MAE / RMSE, mmHg) | 7.021 / 10.078 | 7.014 / 10.066 |
+| Real-data effect of NEE 0.1, 1 / 3 / 6 h (seed 0) | +0.12 / +0.22 / +0.06 | +0.16 / +0.21 / −0.08 |
+| Real-data noise floor, 90th pct at 6 h | −0.15 (mean −0.35) | +0.40 (mean +0.16) |
 
 ---
 
