@@ -1,4 +1,4 @@
-# The journey: building an ICU world model, stage by stage
+# The journey: building an ICU world model, stage by stage (1-13)
 
 This is the short map of the project. [LEARNING.md](../LEARNING.md) has the full explanations,
 numbers and figures for every stage; this file shows how the stages connect, what each one
@@ -25,6 +25,7 @@ flowchart TD
         S10b --> S11["11 act_now path<br/>fixes hour 1 for strong effects"]
         S11 --> S12["12 Confounder with a visible ramp"]
         S12 --> S12b["12b Confounder hidden until after the start<br/>unbiased for the wrong reason"]
+        S12b --> S13["13 Let it see a start<br/>still misses the post-start drop"]
     end
     S6 --> S7
     S9 --> S10
@@ -255,7 +256,34 @@ Each stage: **Question**, **Hypothesis** (what we expected before running it), *
   indicator or more capacity on the current-action path), knowing that fixing it should
   *expose* the bias, which is what a confounding benchmark is for.
 
-## How we got from "no effect" to an answer (Stages 8-12b)
+### Stage 13 - Let the model see a start
+- **Question:** If the model can predict the hour after a vasopressor start, does it become
+  biased under hidden confounding?
+- **Hypothesis** (written before running, with verdict rules): yes. Making `act_now` see
+  `[a_t, a_t - a_{t-1}]` (a start or stop is visible directly) will let it predict the
+  post-start drop and move the 12b G = 15 effect toward the red line.
+- **Method:** That one input change (`act_delta=True`); trained on K = 30 (G = 0), 12b
+  G = 15 and real data; same seed and hyperparameters. Checks: one-step fit around real
+  starts, Part B recovery and bias, one-step error, and the temperature negative control.
+- **Baseline:** The current (act_now) models; the predicted confounding shift of -15 / -9.1 /
+  -4.3 mmHg; the noise floor.
+- **Result:** The hour after a start is still missed: 13% of the 14.4 mmHg drop is predicted
+  (17% before). The confounding shift is -0.73 mmHg at 1 h (-0.34 before). In the counterfactual
+  the drug's hour-1 effect at K = 30 improves from 18% to 54-72%. One-step error is unchanged
+  (MAP 7.019 vs 7.014). On real data the model now responds to the vasopressor in MAP at
+  1 h (+0.49, above the noise floor) but not in temperature (negative control passed).
+- **Hypothesis right?** Rejected by the pre-set rules, but the precondition was never met:
+  the change did not make the model predict the hour after a start. The conditional claim
+  remains untested; "one input change is enough" is rejected.
+- **Lesson:** Check that an intervention on the model achieved its intermediate goal before
+  reading the downstream result; otherwise a non-test looks like a negative result. Seeing
+  the start is not the obstacle; rarity (0.93% of hours), the KL budget or the decoder's
+  variance are the untested candidates.
+- **Next:** Make the post-start hour learnable on purpose (e.g. weight start hours in the
+  loss, or check what the decoder variance does there), then rerun the 12b test; and model
+  the real pre-start fall in MAP, the real-world confounder none of the models predicts.
+
+## How we got from "no effect" to an answer (Stages 8-13)
 
 ```mermaid
 flowchart TD
@@ -276,7 +304,11 @@ flowchart TD
     K3 --> L
     L -- "raw bias -15 at 1 h;<br/>model still ~unbiased" --> M["'Visible at decision hour' ruled out"]
     M --> N["Measured: one-step prior barely responds to a start (2% of the drop)<br/>=> unbiased for the wrong reason (under-fitting)"]
-    N --> O["Next: why the prior misses starts;<br/>a better fit should expose the bias"]
+    N --> P{"Stage 13: let it see a start<br/>(act_now gets a_t - a_(t-1))"}
+    P -- "hour after a start still missed (13%)" --> Q["Precondition not met:<br/>conditional hypothesis untested"]
+    P -- "drug hour 1 at K = 30: 18% -> 54-72%;<br/>real data: MAP responds, Temp does not" --> R["Better drug path, no sign of<br/>confounding through the action"]
+    Q --> O["Next: make the post-start hour learnable on purpose,<br/>then rerun the confounding test"]
+    R --> O
 ```
 
 ## Glossary
@@ -298,6 +330,10 @@ flowchart TD
 - **Ablation:** removing an input to see whether the model relies on it.
 - **Semi-synthetic benchmark:** real data plus a planted effect of known size.
 - **Noise floor:** how much two training runs on identical data disagree; an effect must beat it.
+- **Negative control outcome:** an outcome the treatment should not affect (here temperature);
+  an imagined "effect" on it points to confounding, not to the drug.
+- **Teacher forcing:** training each one-step prediction on the real previous hours, not on
+  the model's own predictions.
 - **NEE:** norepinephrine-equivalent vasopressor dose, mcg/kg/min.
 - **MAP:** mean arterial pressure, mmHg.
 

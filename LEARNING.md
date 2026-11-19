@@ -1410,7 +1410,142 @@ The prediction for a model that fits the data is −15.00 mmHg; the current desi
   of the predicted bias).
 - **Rejected:** the shift stays above −1.5 mmHg (less than 10% of the predicted bias).
 
-*Results: added after the run, below.*
+### Results
+
+**Training.** The three act_delta models trained for about 12 s per epoch on the T4, with
+W&B logging. They kept epochs 107 of 122 (K = 30), 89 of 104 (12b, G = 15) and 118 of 133
+(real data), and used 3–4 of the 8 latent dimensions.
+
+**1. Hour-1 fit at real starts** (test split, 4,549 starts with MAP measured in both hours;
+mean change of MAP' into each hour):
+
+| Data | | −2 | −1 | 0 (start) | **+1** | +2 | +3 |
+|---|---|---|---|---|---|---|---|
+| real | measured | −0.73 | −3.71 | −2.58 | **+1.47** | −0.26 | +0.05 |
+| | current / act_delta | −0.72 / −0.83 | −0.51 / −0.63 | +0.99 / +0.83 | **+0.55 / +0.45** | −0.71 / −0.79 | −0.51 / −0.66 |
+| K = 30, G = 0 | measured | −0.76 | −3.87 | −2.72 | **+2.67** | +0.98 | +0.44 |
+| | current / act_delta | −0.85 / −1.06 | −0.70 / −0.87 | +0.80 / +0.58 | **+0.80 / +0.53** | −0.08 / −0.42 | −0.21 / −0.54 |
+| 12b, G = 15 | measured | −0.77 | −3.65 | −2.38 | **−11.71** | +4.30 | +2.98 |
+| | current / act_delta | −0.86 / −0.77 | −0.70 / −0.64 | +0.20 / +0.24 | **−1.62 / −1.41** | +5.82 / +5.94 | +2.89 / +2.71 |
+
+All values are in mmHg.
+
+![One-step fit around real starts](outputs/figures/stage13_start_fit.png)
+
+- **The hour after a start is still missed.** In the 12b data the hour after a start falls
+  14.38 mmHg more than in the drug-only data. The current model predicts 2.42 of that (17%);
+  the act_delta model predicts 1.94 (13%).
+- Both models instead predict the *recovery* in the hour after (+5.8 to +5.9 vs +4.30
+  measured), from the drop they have already seen. This is the Stage 12b explanation, now
+  measured directly.
+- **The hours before a start are missed on real data too.** MAP falls 3.7 mmHg in the hour
+  before a start and 2.6 mmHg into the start hour. Neither model predicts it.
+- That fall is *real* deterioration before treatment: the real-world version of the
+  confounder we planted.
+
+**2. K = 30, G = 0: does it fix hour 1?** Recovered effect (vs the current real-data model,
+paired per moment):
+
+| | 1 h | 3 h | 6 h | share at 1 h / 6 h |
+|---|---|---|---|---|
+| current model | +0.33 | +2.19 | +2.53 | 18% / 85% |
+| act_delta model | **+1.37** | +2.39 | +2.59 | **72%** / 87% |
+| act_delta, vs its own real-data model | +1.03 | +2.35 | +2.58 | 54% / 86% |
+| true | +1.90 | +2.85 | +2.99 | |
+
+- **In the Part B counterfactual, hour 1 is largely fixed:** 18% becomes 54–72%, depending
+  on the reference model.
+- **At real starts the gain is small.** The drug part of the change in the hour after a
+  start is +1.20 mmHg measured (K = 30 minus real data). The act_delta model predicts only
+  +0.08 (0.53 − 0.45); the current model predicts +0.25.
+- So the model responds to a 0.1 dose given to a hypotensive patient with no earlier
+  vasopressor, but much less at the real starts, which include restarts and smaller doses.
+  **We have not explained this difference.**
+
+**3. 12b, G = 15: does it move toward the red line?**
+
+| | 1 h | 3 h | 6 h |
+|---|---|---|---|
+| true effect | +1.90 | +2.85 | +2.99 |
+| observational prediction (red line) | −13.10 | −6.25 | −1.31 |
+| current model, learned (10–90%) | −0.01 (−0.12 .. +0.11) | +1.98 (+1.78 .. +2.21) | +2.59 (+2.29 .. +2.97) |
+| act_delta model, learned (10–90%) | +0.64 (+0.23 .. +1.09) | +2.19 (+1.96 .. +2.45) | +2.93 (+2.59 .. +3.33) |
+| **confounding shift**, current (G = 15 − G = 0) | −0.34 | −0.21 | +0.06 |
+| **confounding shift**, act_delta | **−0.73** | −0.20 | +0.34 |
+| predicted confounding shift | −15.00 | −9.10 | −4.30 |
+
+All values are in mmHg.
+
+![Learned vs true vs observational, 12b G = 15](outputs/figures/stage13_confounding.png)
+
+- The act_delta model's hour-1 confounding shift doubles, from −0.34 to −0.73 mmHg. That is
+  in the predicted direction, but only 5% of the −15 mmHg the data contains.
+- Both models stay close to the true effect, far from the red line.
+
+**4. One-step error on real data** (prior; MAE / RMSE / share inside the 10–90% band):
+
+| Vital | current | act_delta |
+|---|---|---|
+| HR (bpm) | 5.144 / 7.657 / 77.9% | 5.134 / 7.650 / 76.7% |
+| RR (/min) | 2.814 / 3.991 / 76.6% | 2.825 / 3.978 / 76.1% |
+| SpO2 (%) | 1.346 / 2.128 / 77.7% | 1.349 / 2.134 / 79.1% |
+| MAP (mmHg) | 7.014 / 10.066 / 77.6% | 7.019 / 10.073 / 78.0% |
+| Temp (°C) | 0.265 / 0.389 / 78.6% | 0.268 / 0.390 / 78.5% |
+
+Unchanged.
+
+**5. Negative control with the act_delta real-data model** (the same check as the section
+above, side by side; imagined NEE 0.1 minus 0 on the 6,413 moments). The noise floor is the
+current design's two seeds, because only one act_delta seed was trained.
+
+| Vital | current model at 1 / 3 / 6 h | act_delta model at 1 / 3 / 6 h | beyond the noise floor (strict), act_delta |
+|---|---|---|---|
+| MAP (mmHg) | +0.16 / +0.21 / −0.08 | **+0.49** / +0.26 / −0.07 | **yes at 1 h** (+0.21 .. +0.84 vs noise up to +0.19); no at 3 and 6 h |
+| Temp (°C) | +0.001 / −0.000 / −0.002 | +0.000 / +0.001 / +0.005 | **no** at any hour |
+| SpO2 (%) | +0.04 / +0.08 / +0.13 | +0.08 / +0.08 / +0.12 | no |
+| RR (/min) | +0.00 / +0.07 / +0.07 | −0.03 / +0.08 / +0.09 | no |
+| HR (bpm) | +0.12 / +0.19 / +0.11 | −0.02 / +0.06 / +0.04 | no |
+
+- The act_delta model **does respond** to the vasopressor for MAP in the first hour: +0.49
+  mmHg, with its whole 10–90% range across patients above the noise floor.
+- It does **not** "respond" on temperature: +0.000 to +0.005 °C, inside the noise floor at
+  every hour.
+- So, now that the action path carries a MAP response, the negative control is informative,
+  and it finds no sign that confounding entered through the action path. The response it
+  has is specific to MAP.
+- It is small, though (+0.49 mmHg), and only one seed was trained.
+
+### Verdict
+
+By the rules fixed before the run:
+- The act_delta model captures **13%** of the drop in the hour after a start. That is below
+  the 50% needed.
+- The confounding shift is **−0.73 mmHg**. That is above −1.5, i.e. less than 10% of the
+  predicted −15.
+
+**Verdict: rejected.**
+
+**What this does and does not mean.** The hypothesis is conditional: *if* the model can
+predict the hour after a start, *then* it will be biased. Step 1 shows the condition was
+**not met**. Seeing `a_t − a_{t−1}` did not make the model predict the post-start drop (13%
+vs 17% before). So Stage 13 rejects the idea that this one input change is enough. It does
+**not** test, and does not refute, the conditional claim itself. What we did learn:
+- The extra input clearly helps the *drug* effect in the counterfactual (hour 1 at K = 30:
+  18% → 54–72%), and the real-data model now responds to the vasopressor in MAP only, not
+  in temperature.
+- It barely helps with the 15 mmHg drop after a start, even though the drop is large and
+  the start is now visible in the input.
+- So the obstacle is not that the start is invisible. Remaining candidates, all untested:
+  - starts are rare: 0.93% of hours;
+  - the KL term prices a missed prediction on those few hours too cheaply;
+  - the decoder absorbs the error with a wider uncertainty band instead.
+- On real data, MAP falls in the hours *before* a start: the real confounder. None of our
+  models predicts that fall.
+
+**Lesson.** Before testing "if the model could do X, then Y", check that the change really
+made it able to do X. Here the one-step fit at starts was that check, and it failed.
+Reporting only the downstream number (the confounding shift) would have looked like evidence
+against the hypothesis, when the test never happened.
 
 ---
 
