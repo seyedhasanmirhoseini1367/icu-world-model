@@ -1,4 +1,4 @@
-# The journey: building an ICU world model, stage by stage (1-13)
+# The journey: building an ICU world model, stage by stage (1-13b)
 
 This is the short map of the project. [LEARNING.md](../LEARNING.md) has the full explanations,
 numbers and figures for every stage; this file shows how the stages connect, what each one
@@ -26,6 +26,7 @@ flowchart TD
         S11 --> S12["12 Confounder with a visible ramp"]
         S12 --> S12b["12b Confounder hidden until after the start<br/>unbiased for the wrong reason"]
         S12b --> S13["13 Let it see a start<br/>still misses the post-start drop"]
+        S13 --> S13b["13b Weight the post-start hours<br/>fit -> biased, as predicted"]
     end
     S6 --> S7
     S9 --> S10
@@ -283,7 +284,35 @@ Each stage: **Question**, **Hypothesis** (what we expected before running it), *
   loss, or check what the decoder variance does there), then rerun the 12b test; and model
   the real pre-start fall in MAP, the real-world confounder none of the models predicts.
 
-## How we got from "no effect" to an answer (Stages 8-13)
+### Stage 13b - Force the model to fit the hours after a start
+- **Question:** Why does the model miss the hour after a start, and if it is forced to fit it,
+  does hidden confounding appear?
+- **Hypothesis** (pre-registered, with a numeric gate and verdict rules): forcing the fit will
+  recover the hour-1 drug effect at K = 30 and pull the 12b G = 15 effect at least 30% of the
+  way toward the observational line.
+- **Method:** Step 1, evaluation only: predicted spread, KL and residual at start hours;
+  the start-fit with two point predictions; real starts vs Part B moments. Step 2, because
+  the gate opened: act_delta with the reconstruction of start hour +1 and +2 weighted 10x,
+  trained on K = 30, 12b G = 15 and real data.
+- **Baseline:** The current and act_delta models; the true effect; the observational
+  prediction; the noise floor.
+- **Result:** Step 1: at starts the model widens its spread (1.24-1.32x) *and* misses the
+  12b drop by 10 mmHg; the point-prediction method is not the cause; real starts (MAP 72,
+  25% restarts) differ clearly from the Part B moments (MAP 59, first-time, falling fast).
+  Step 2: 64% of the post-start drop is captured (was 13-17%); the 12b G = 15 hour-1 effect
+  becomes -5.33 mmHg (true +1.90; confounding shift -8.47 vs predicted -15). On real data the
+  model now imagines +1.86 mmHg for MAP at 1 h and nothing for temperature. One-step MAP MAE
+  +1.2%.
+- **Hypothesis right?** Confirmed by the pre-set rules. Caveats: the weighting also changed
+  the reconstruction/KL balance everywhere (KL 2.7 -> 6-7 nats), so part of the effect may be
+  that global shift; one seed; the drug's steady-state effect at K = 30 fell to 58%.
+- **Lesson:** "No bias" in a world model can just mean "did not fit that part of the data".
+  Fit it, and hidden confounding comes in. A better fit cannot remove hidden confounding;
+  it reproduces it.
+- **Next:** A control with the same global KL balance but no start weighting; multiple seeds;
+  and the real pre-start fall in MAP, which no model predicts yet.
+
+## How we got from "no effect" to an answer (Stages 8-13b)
 
 ```mermaid
 flowchart TD
@@ -307,8 +336,10 @@ flowchart TD
     N --> P{"Stage 13: let it see a start<br/>(act_now gets a_t - a_(t-1))"}
     P -- "hour after a start still missed (13%)" --> Q["Precondition not met:<br/>conditional hypothesis untested"]
     P -- "drug hour 1 at K = 30: 18% -> 54-72%;<br/>real data: MAP responds, Temp does not" --> R["Better drug path, no sign of<br/>confounding through the action"]
-    Q --> O["Next: make the post-start hour learnable on purpose,<br/>then rerun the confounding test"]
-    R --> O
+    Q --> S13b{"Stage 13b: weight the hours<br/>after a start 10x in the loss"}
+    R --> S13b
+    S13b -- "post-start drop captured 64%;<br/>12b hour-1 effect +1.9 -> -5.3" --> V["Confirmed: fit the post-start hour<br/>and hidden confounding appears"]
+    V --> O["Next: control for the global KL shift, more seeds,<br/>and the real pre-start fall in MAP"]
 ```
 
 ## Glossary
