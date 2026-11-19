@@ -2273,6 +2273,89 @@ Limits:
 
 ---
 
+## Stage 14b - Close the action leak in the JEPA target
+
+### Pre-registration (written and committed before running anything)
+
+**Why.** In Stage 14 the JEPA model reacted quickly to the drug at hour 1 (51% of the planted
+effect, act_now 18%), but its response faded over the next hours. We suspected a **leak**,
+written down before Stage 14 ran. The target embedding of hour t+1 is built from that hour's
+token, and the token contains the action `a_t` (`act_proj(a_t)` is added to it). The predictor
+also receives `a_t`, so it can "predict" part of the target just by copying the action. That
+can look like a response to the drug without any change in the vitals.
+
+**The one change.** The target encoder builds its tokens **without any action input**: the
+action term is left out (its `act_proj` is not applied), on the target side only. So the
+target embedding of hour t+1 is made from the vitals, masks, time gaps and hour alone. The
+online encoder, the predictor, the prior, the posterior, the loss, the probe and every
+hyperparameter are exactly as in Stage 14. New files only:
+- `src/model_jepa_b.py`: a subclass that overrides only the target embedding;
+- `src/train_jepa_b.py`;
+- `src/stage14b_runner.py`.
+
+The Stage 14 code and results are not touched.
+
+**Also logged: KL per hour.** For every real predicted hour on the validation split, we compute
+the KL (summed over the 8 `z` dimensions). We log, every epoch:
+- its mean;
+- the share of hours below the 1-nat free-bits floor;
+- the mean by hour of the stay.
+
+The same profile is measured at the kept checkpoint for act_now, JEPA (14) and JEPA (14b).
+This shows whether `z` is still unused. It is descriptive, not part of the verdict.
+
+**What we train** (one Kaggle job, seed 0 unless stated):
+- JEPA-14b on real data (seeds 0 and 1, for the noise floor), on K = 10, 30 and 100, and on
+  12b G = 15, as in Stage 14.
+- For comparison, the same job re-evaluates the act_now models and the six Stage 14 JEPA
+  checkpoints, so all three designs are measured on the same moments.
+
+**Benchmarks**, side by side for act_now, JEPA (14) and JEPA-14b, with the same figures as
+Stage 14 plus one KL-per-hour figure:
+- Stage 7 one-step table;
+- Stage 8A 12-hour horizon;
+- Stage 9 ablation (real and K = 30);
+- Stage 10 recovery for K = 10 / 30 / 100 with the noise floor;
+- Stage 12b G = 15 (learned vs true vs observational, confounding shift).
+
+**The hypothesis.**
+
+> **With the leak removed, JEPA's hour-1 response drops and its K = 30 recovery does not
+> exceed act_now's; forecasts stay worse than act_now's.**
+
+**Verdict rules** (fixed now; computed automatically in the job; thresholds as in Stage 14):
+- **R1, the hour-1 response drops:** both of the following hold.
+  - (a) The K = 30 recovered effect at hour 1 is, for 14b, at most 0.8 × JEPA-14's.
+  - (b) The K = 30 Stage 9 increase in MAP MAE on vasopressor-active hours, when the
+    vasopressor input is set to 0, is, for 14b, below 0.8 × JEPA-14's.
+- **R2, recovery does not exceed act_now:** the K = 30 recovered share averaged over 1, 3 and
+  6 h is, for 14b, at most act_now's.
+- **R3, forecasts stay worse:** 14b's one-step MAP MAE (prior, test split) is above 1.05 ×
+  act_now's. That is, Stage 14's parity rule H1 fails.
+- **Confirmed:** R1, R2 and R3 all hold.
+- **Rejected:** neither (a) nor (b) holds. The hour-1 response did not drop, so the leak was
+  not what drove it.
+- **Partly:** anything else.
+- **Inconclusive:** any of these:
+  - the 14b real-data or K = 30 model has collapsed (more than half of the 64
+    target-embedding dimensions with standard deviation below 0.01);
+  - JEPA-14's hour-1 effect or ablation increase is not positive in this job, so the 0.8
+    factor has no meaning;
+  - a needed result is missing.
+
+**Known caveats, written down in advance:**
+- JEPA's seed-to-seed spread at hour 1 is large: in Stage 14, its noise floor at hour 1 had a
+  standard deviation of 0.23 mmHg, against an hour-1 effect of 0.97. So a 20% drop is within
+  seed noise for a single model. We report the noise floor next to the result.
+- The online encoder still adds `act_proj(a_{t-1})` to its tokens, and the predictor still
+  sees `a_t`. That is intended: the model must be able to use the action. Only the *target*
+  loses it.
+- One seed per model (two on real data).
+
+*Results: added after the run, below.*
+
+---
+
 ## Stage 8 - What we learned
 
 ### The main lessons
