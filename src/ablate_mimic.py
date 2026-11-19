@@ -92,10 +92,11 @@ def run(npz, model_path, device="cpu", batch_size=256, seed=0):
             # Sensitivity of the prior to a_t's NEE, real history fixed.
             h = out["h"][:, :-1]                                              # (B, T-1, D)
             a_t = a_real[:, :-1]
+            a_before = torch.cat([torch.zeros_like(a_real[:, :1]), a_real[:, :-2]], 1)   # a_{t-1}
             a0, a1 = a_t.clone(), a_t.clone()
             a0[..., NEE], a1[..., NEE] = 0.0, DOSE
-            mu0, ls0 = model.prior_from(h, a0)                                # (B, T-1, Z)
-            mu1, _ = model.prior_from(h, a1)
+            mu0, ls0 = model.prior_from(h, a0, a_before)                      # (B, T-1, Z)
+            mu1, _ = model.prior_from(h, a1, a_before)
             m0, _ = model.decoder(torch.cat([mu0, h], -1))                    # (B, T-1, V)
             m1, _ = model.decoder(torch.cat([mu1, h], -1))
             v = base["valid"][:, 1:].bool()                                   # positions with a real next hour

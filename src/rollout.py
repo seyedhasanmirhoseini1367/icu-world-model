@@ -53,7 +53,7 @@ def imagine(model, x, mask, delta, a_hist, a_future):
         tokens = model.embed(x, mask, delta, a_prev, torch.arange(L, device=x.device))  # (S, L, D)
         h_t = model.encode(tokens)[:, -1]                                 # (S, D) summary up to the last hour
         a_t = a_future[:, k]                                              # (S, A)
-        mu, log_sigma = model.prior_from(h_t, a_t)                       # (S, Z) each
+        mu, log_sigma = model.prior_from(h_t, a_t, a_prev[:, -1])        # (S, Z) each; a_prev[:, -1] = a_{t-1}
         z = model.sample(mu, log_sigma)                                   # (S, Z)
         dec_mu, dec_ls = model.decoder(torch.cat([z, h_t], -1))           # (S, V) each
         x_new = dec_mu + dec_ls.exp() * torch.randn_like(dec_mu)          # (S, V) one sampled observation

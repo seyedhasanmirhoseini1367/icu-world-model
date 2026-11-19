@@ -148,3 +148,49 @@ def map_gap(root):
     return dict(valid_hours=valid, hours_with_map_any=int(m_any or 0), hours_with_map_plausible=int(m_pl or 0),
                 gap_hours_any=int(gap_any or 0), gap_share_any=(gap_any or 0) / valid,
                 gap_hours_plausible=int(gap_pl or 0), gap_share_plausible=(gap_pl or 0) / valid)
+
+
+D_FIT = list(range(-3, 4))
+
+
+@torch.no_grad()
+def start_fit(model, ds, stats, device="cpu", batch_size=256):
+    """One-step prior fit around real vasopressor starts in `ds` (one split).
+    For d = -3 .. +3, hour j = s + d with MAP measured at j and j-1:
+        measured change  = MAP'_j - MAP'_{j-1}
+        predicted change = (prior one-step prediction of MAP'_j) - MAP'_{j-1}
+    The prediction for hour j uses the history up to j-1 and the action a_{j-1}; so d = +1 is
+    the hour after the start, predicted with the start itself as the current action."""
+    j_map = C.MAP
+    std = float(stats["std"][j_map])
+    nee = ds.a[..., C.NEE].numpy()
+    starts = C.vaso_starts(nee)
+    sums = {d: dict(n=0, measured=0.0, predicted=0.0, abs_err=0.0) for d in D_FIT}
+    model.eval()
+    for lo in range(0, len(ds), batch_size):
+        sl = slice(lo, lo + batch_size)
+        batch = {k: getattr(ds, k)[sl].to(device) for k in ("x", "mask", "delta", "a", "valid", "idx")}
+        out = model(batch)
+        point, _ = model.decoder(torch.cat([out["prior_mu"], out["h"][:, :-1]], -1))   # (B, T-1, V)
+        x = batch["x"][..., j_map].cpu().numpy()
+        m = (batch["mask"][..., j_map] > 0).cpu().numpy() & (batch["valid"] > 0).cpu().numpy()
+        p = point[..., j_map].cpu().numpy()                                               # p[:, j-1] predicts hour j
+        T = x.shape[1]
+        rows, cols = np.nonzero(starts[sl])
+        for d in D_FIT:
+            j = cols + d
+            ok = (j >= 1) & (j < T)
+            r, jj = rows[ok], j[ok]
+            ok2 = m[r, jj] & m[r, jj - 1]
+            r, jj = r[ok2], jj[ok2]
+            meas = (x[r, jj] - x[r, jj - 1]) * std
+            pred = (p[r, jj - 1] - x[r, jj - 1]) * std
+            s = sums[d]
+            s["n"] += len(r)
+            s["measured"] += float(meas.sum())
+            s["predicted"] += float(pred.sum())
+            s["abs_err"] += float(np.abs(pred - meas).sum())
+    return dict(d=D_FIT, n=[sums[d]["n"] for d in D_FIT],
+                measured_change=[sums[d]["measured"] / max(sums[d]["n"], 1) for d in D_FIT],
+                predicted_change=[sums[d]["predicted"] / max(sums[d]["n"], 1) for d in D_FIT],
+                mae=[sums[d]["abs_err"] / max(sums[d]["n"], 1) for d in D_FIT])
