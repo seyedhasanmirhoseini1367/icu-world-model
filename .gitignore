@@ -4,3 +4,12 @@ __pycache__/
 # generated data, checkpoints and logs stay local; figures are versioned for LEARNING.md
 outputs/*
 !outputs/figures/
+# JEPA results: only small files are versioned (figures, result JSON/CSV); checkpoints, data and
+# W&B folders stay local (checkpoints go to a GitHub Release)
+!outputs/jepa/
+outputs/jepa/**
+!outputs/jepa/**/
+!outputs/jepa/**/*.png
+!outputs/jepa/**/*.json
+!outputs/jepa/**/*.csv
+outputs/jepa/**/wandb/
