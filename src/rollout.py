@@ -22,7 +22,7 @@ import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from data import load_splits, norm_stats   # noqa: E402
-from model import WorldModel                # noqa: E402
+from model import load_world_model           # noqa: E402
 import simulator                            # noqa: E402
 
 T0 = 24            # last real hour
@@ -50,10 +50,10 @@ def imagine(model, x, mask, delta, a_hist, a_future):
     imagined = []
     for k in range(a_future.shape[1]):
         L = x.shape[1]                                                    # current length, L0 + k
-        tokens = model.embed(x, mask, delta, a_prev, torch.arange(L))     # (S, L, D)
+        tokens = model.embed(x, mask, delta, a_prev, torch.arange(L, device=x.device))  # (S, L, D)
         h_t = model.encode(tokens)[:, -1]                                 # (S, D) summary up to the last hour
         a_t = a_future[:, k]                                              # (S, A)
-        mu, log_sigma = model.prior(torch.cat([h_t, a_t], -1))            # (S, Z) each
+        mu, log_sigma = model.prior_from(h_t, a_t, a_prev[:, -1])        # (S, Z) each; a_prev[:, -1] = a_{t-1}
         z = model.sample(mu, log_sigma)                                   # (S, Z)
         dec_mu, dec_ls = model.decoder(torch.cat([z, h_t], -1))           # (S, V) each
         x_new = dec_mu + dec_ls.exp() * torch.randn_like(dec_mu)          # (S, V) one sampled observation
@@ -107,8 +107,7 @@ def run_causal_test(name, seed=0, model_file=None):
     torch.manual_seed(seed)
     stats = norm_stats()
     to_mmhg = lambda z: z * stats["std"][0] + stats["mean"][0]           # noqa: E731
-    model = WorldModel()
-    model.load_state_dict(torch.load(model_file or OUT / f"model_{name}.pt"))
+    model = load_world_model(model_file or OUT / f"model_{name}.pt", n_vitals=2, n_actions=2)
     test = load_splits(name)[0]["test"]
     sim = np.load(OUT / f"sim_{name}.npz")
 
