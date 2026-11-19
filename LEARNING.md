@@ -1058,6 +1058,243 @@ conversion is not a source of error worth fixing.**
 | Real-data effect of NEE 0.1, 1 / 3 / 6 h (seed 0) | +0.12 / +0.22 / +0.06 | +0.16 / +0.21 / −0.08 |
 | Real-data noise floor, 90th pct at 6 h | −0.15 (mean −0.35) | +0.40 (mean +0.16) |
 
+From Stage 12 on, the act_now variant is the default (`WorldModel(act_now=True)`);
+`act_now=False` gives the original model, and every older checkpoint still loads as the
+original.
+
+---
+
+## Stage 12 - Hidden confounding: does a sicker-gets-the-drug signal fool the model?
+
+**The question.** In real ICUs, patients get vasopressors *because* they are getting worse,
+often for reasons the data does not record. This is **unmeasured (hidden) confounding**: a
+cause of both the treatment and the outcome that the model never sees. If the model learns
+"what usually happens after a vasopressor is started", it will mix the drug's effect with the
+deterioration that triggered it. Stage 12 builds a benchmark where we know both parts exactly.
+
+**The benchmark.** Real histories, real actions, real missingness. On top of the measured MAP:
+
+    MAP'_t = MAP_t + K * e_t - G * u_t            (K = 30 mmHg per mcg/kg/min)
+
+- `e_t` is the lagged dose from Stage 10: `e_{t+1} = e_t + (1 - exp(-1)) (NEE_t - e_t)`, `e_0 = 0`.
+- `u_t` is a **hidden deterioration**, never given to the model. A vasopressor **start** is an
+  hour `s` with `NEE_s > 0` and `NEE_{s-1} = 0`. Each start contributes a kernel `k(d)`, with
+  `d = t - s`:
+  - `k(d) = (d + 3) / 3` for `-3 <= d <= 0`: a linear ramp over the 3 h before, 1 at the start;
+  - `k(d) = exp(-d / 4)` for `d > 0`: a decay with time constant 4 h after;
+  - `k(d) = 0` otherwise.
+
+  Then `u_t = max over starts s of k(t - s)`, so `u` stays between 0 and 1.
+- Three runs: G = 0 (no confounding, the same data as Stage 11's K = 30), G = 5 and G = 15 mmHg.
+- Same model (act_now, now the default), hyperparameters, seed 0, GPU and W&B. Everything is
+  evaluated on the same 6,413 Part B moments, chosen once on the real data.
+
+**The true causal effect.** The drug does not change `u`, so giving a constant dose `D` from
+the decision hour `t` changes MAP only through the drug term:
+
+    true_h = K * D * (1 - exp(-h))        = +1.90 / +2.85 / +2.99 mmHg at h = 1 / 3 / 6 (D = 0.1)
+
+**The bias we predicted.** Suppose the model learns the observational relationship
+`E[MAP' | history, actions]`. Part B compares "dose from hour t" with "no dose" for the
+same history. For hour `t + h` the model has seen the actions of hours `t .. t+h-1`:
+- **Dose arm:** a start at `t`. The moments have no vasopressor before `t`, so
+  `u_{t+h} = exp(-h/4)`.
+- **No-dose arm:** no start in `t .. t+h-1`, so `u_{t+h}` can only be the ramp of a start
+  still to come. Its average, measured on the training split at moments chosen the same way,
+  is `U0_h` = 0.026 / 0.014 / 0.010.
+
+So the observational bias should be
+
+    bias_obs_h = -G * (exp(-h/4) - U0_h)  = -3.76 / -2.29 / -1.07 (G = 5),  -11.29 / -6.88 / -3.20 (G = 15)
+
+This prediction averages over the moments. It ignores what an individual history reveals
+about `u`.
+
+**Results** (learned = semi-synthetic model minus the real-data model, paired per moment):
+
+| G | hour | true | learned (10–90% across patients) | bias = learned − true | predicted bias |
+|---|---|---|---|---|---|
+| 0 | 1 | +1.90 | +0.33 (+0.21 .. +0.47) | −1.56 | 0 |
+| 0 | 3 | +2.85 | +2.19 (+1.93 .. +2.50) | −0.66 | 0 |
+| 0 | 6 | +2.99 | +2.53 (+2.24 .. +2.87) | −0.46 | 0 |
+| 5 | 1 | +1.90 | +0.17 (+0.05 .. +0.33) | −1.72 | −3.76 |
+| 5 | 3 | +2.85 | +2.42 (+2.19 .. +2.68) | −0.43 | −2.29 |
+| 5 | 6 | +2.99 | +2.78 (+2.50 .. +3.10) | −0.21 | −1.07 |
+| 15 | 1 | +1.90 | −0.08 (−0.19 .. +0.02) | −1.98 | −11.29 |
+| 15 | 3 | +2.85 | +2.49 (+2.19 .. +2.80) | −0.37 | −6.88 |
+| 15 | 6 | +2.99 | +3.15 (+2.75 .. +3.60) | +0.16 | −3.20 |
+
+All values are in mmHg. The noise floor (two real-data models with different seeds) has a
+mean of +0.07 / +0.11 / +0.16 and a 10–90% range of −0.03..+0.19 / −0.08..+0.30 /
+−0.07..+0.40 at 1 / 3 / 6 h.
+
+![Stage 12: true vs learned vs predicted](outputs/figures/stage12_confounding.png)
+
+**Reading the table.**
+- At G = 0 the bias is the hour-1 weakness we already knew from Stage 11: only 18% of the
+  hour-1 effect is recovered at K = 30.
+- The part that comes from confounding is the change from G = 0 to G = 15:
+  −0.41 / +0.30 / +0.62 mmHg. The prediction was −11.29 / −6.88 / −3.20.
+- So the model is biased far less than predicted, and in no consistent direction. We did
+  not expect this.
+
+The new G = 0 run reproduced Stage 11's K = 30 model exactly, to every digit, including its
+early stop at epoch 71. Training here is deterministic. The kept epochs were 56 of 71 (G = 0),
+143 of 158 (G = 5) and 106 of 121 (G = 15), at about 13 s per epoch.
+
+### Checks: why is the G = 15 model not fooled?
+
+**Check 1: is the confounder really in the data?** Around all 33,158 real vasopressor
+starts, we took the mean of `MAP' - MAP` from 6 h before to 6 h after, over hours with a
+measured MAP.
+
+![Check 1: injected signal around real starts](outputs/figures/stage12_event_study.png)
+
+- **Stage 12, G = 15:** −1.74 at 3 h before the start, −14.95 at the start hour, −10.44 one
+  hour after and −4.48 three hours after. This follows the specified curve (dashed) exactly
+  once the hours approach the start.
+- **Away from a start**, the measured line sits about 2.5 mmHg below the specified one.
+  These are patients whose vasopressor was stopped and restarted, so an earlier start's
+  decay is still present. That is the "max over starts" in the formula.
+- **Confirmed:** the deterioration is injected as specified.
+
+**Check 2: does the raw data show the predicted bias?** On the 6,413 moments we took the
+measured MAP' at `t + h` for the 253 moments that started the vasopressor at `t` minus the
+same for those that did not.
+
+| data | h = 0 | h = 1 | h = 3 | h = 6 |
+|---|---|---|---|---|
+| real MAP | −1.07 | +0.41 | −1.34 | −1.29 |
+| G = 0 (drug only) | −1.07 | +1.52 | +1.77 | +2.01 |
+| G = 5 | −6.00 | −2.24 | −0.48 | +0.88 |
+| G = 15 | −15.84 | −9.75 | −4.99 | −1.38 |
+
+The rows are started minus not started, in mmHg.
+
+- The extra difference caused by `u` is G = 15 minus G = 0: **−11.27 / −6.76 / −3.39** at
+  h = 1 / 3 / 6.
+- The formula `−G × (mean u started − mean u not started)` on the same measured hours gives
+  **−11.27 / −6.75 / −3.39**.
+- **Confirmed:** the observational data contains exactly the predicted bias. A model that
+  learned `E[MAP' | history, a]` should show it. The model does not.
+
+**Check 3: your hypothesis, that the confounder is visible in the history.** The ramp lowers
+MAP' before the start, so the model might explain the later drop through the history rather
+than the action. We split the moments in two ways:
+- **ramp in history:** `u_t > 0` at the decision hour (426 moments). This is known only from
+  the injected `u`.
+- **observed fall:** the measured MAP'_t is at least 5 mmHg below the mean of the three
+  hours before. This is what the model can see.
+
+| G = 15 model | moments | learned at 1 / 3 / 6 h | change from G = 0, same group |
+|---|---|---|---|
+| ramp in history | 426 | −0.07 / +2.83 / +3.63 | −0.42 / +0.69 / +1.10 |
+| no ramp in history | 5,987 | −0.08 / +2.46 / +3.12 | −0.41 / +0.27 / +0.59 |
+
+- **Not confirmed.** Both groups are equally unbiased, far from the −11 mmHg predicted at
+  hour 1.
+- The "observed fall" split turned out not to be useful: 84% of the moments show a fall,
+  because they are chosen as the first hour with MAP below 65. That split also shows no
+  difference.
+- Stage 12b tests a broader version of this idea next. My own variant: the confounder is
+  fully visible at the decision hour of every *training* start, since `u` = 1 at the start
+  hour.
+
+## Stage 12b - A truly hidden confounder
+
+**The change.** The deterioration should leave no trace in anything the model sees when the
+dose is decided. In our model, MAP at the start hour `t` is already in the history when
+`a_t` is chosen. So `u` must also be 0 at the start hour, not only before it:
+
+    k(d) = exp(-(d - 1) / 4)  for d >= 1   (1 in the hour after the start)
+    k(d) = 0                  for d <= 0
+
+Check 1 confirms the data. For G = 15, nothing appears up to and including the start hour
+(−0.6 mmHg, from earlier starts), −13.76 one hour after (−15 plus the drug's +1.24), and
+−6.35 three hours after.
+
+The no-dose arm now has `u_{t+h} = 0` exactly (`U0_h = 0`), so the predicted bias is
+
+    bias_obs_h = -G * exp(-(h-1)/4)  = -5.00 / -3.03 / -1.43 (G = 5),  -15.00 / -9.10 / -4.30 (G = 15)
+
+**Results** (the same table as Stage 12; G = 0 is the shared drug-only model):
+
+| G | hour | true | learned (10–90% across patients) | bias | predicted bias |
+|---|---|---|---|---|---|
+| 0 | 1 / 3 / 6 | +1.90 / +2.85 / +2.99 | +0.33 / +2.19 / +2.53 | −1.56 / −0.66 / −0.46 | 0 |
+| 5 | 1 | +1.90 | +0.13 (+0.02 .. +0.27) | −1.77 | −5.00 |
+| 5 | 3 | +2.85 | +2.23 (+1.97 .. +2.53) | −0.62 | −3.03 |
+| 5 | 6 | +2.99 | +2.78 (+2.46 .. +3.13) | −0.21 | −1.43 |
+| 15 | 1 | +1.90 | −0.01 (−0.12 .. +0.11) | −1.90 | −15.00 |
+| 15 | 3 | +2.85 | +1.98 (+1.78 .. +2.21) | −0.87 | −9.10 |
+| 15 | 6 | +2.99 | +2.59 (+2.29 .. +2.97) | −0.40 | −4.30 |
+
+All values are in mmHg. The noise floor is the same as in Stage 12.
+
+![Stage 12b: true vs learned vs predicted](outputs/figures/stage12b_confounding.png)
+
+- **The raw data again shows exactly the predicted bias.** Started minus not started, with
+  G = 0 subtracted, is −15.00 / −8.77 / −4.19 at h = 1 / 3 / 6. The formula on the same
+  hours gives −15.00 / −8.78 / −4.20.
+- **At the decision hour (h = 0)** the raw difference is identical to G = 0 (−1.07), so the
+  history really carries no trace.
+- **The model is still almost unbiased.** The change from G = 0 to G = 15 is −0.34 / −0.21 /
+  +0.06 mmHg. The prediction was −15.00 / −9.10 / −4.30.
+- **Training:** G = 15 kept epoch 125 of 140. G = 5 stopped early at epoch 71 (kept 56),
+  the same early-stopping pattern as the K = 30 run.
+
+### What the checks support, and what they rule out
+
+| Explanation | Verdict | Evidence |
+|---|---|---|
+| The confounder was not injected, or is too weak | **ruled out** | Check 1: the injected curve matches the specification. Check 2: the raw data shows the predicted bias to within 0.01 mmHg. |
+| The ramp in each moment's own history lets the model see it (your check 3) | **not confirmed** | Moments with and without a ramp in their history are equally unbiased. |
+| The confounder is visible at the decision hour of every training start (my hypothesis) | **ruled out** | Stage 12b removes every trace before and at the decision hour; the model is still unbiased. |
+| The model's one-step prior barely responds to a start, so it never imagines the post-start drop | **supported by measurement** | See below. |
+
+**What the measurements show.**
+- Hour 1 of Part B *is* the model's one-step prediction: the prior given the real history and
+  a start at `t`.
+- In the training data, the hour after a start is 15 mmHg lower at G = 15 (Stage 12b,
+  check 2). The G = 15 model's hour-1 prediction moves by only −0.34 mmHg compared with
+  G = 0. That is about 2% of what the data contains.
+- This matches the weakness we already knew from Stage 11: only 18% of the drug's own hour-1
+  effect is learned at K = 30.
+- The model never produces the post-start drop in imagination. It therefore has nothing to
+  "recover" from in the later hours.
+- In training, the hours after a start are predicted from a history that already contains the
+  observed drop. The model is trained one step at a time on the real previous hours, which is
+  called **teacher forcing**. So the model can learn "low MAP tends to come back" as a
+  property of the history, not of the action.
+- That is why hours 3 and 6 are not biased either.
+
+**What is *not* tested yet.** We don't know *why* the prior misses the drop after a start.
+Two candidate reasons, both untested:
+- **Rarity:** starts are only 0.93% of the 3.56 million valid hours.
+- **An interaction:** a start means "dose now > 0 *and* dose an hour ago = 0". The
+  current-action path `act_now(a_t)` sees only the current dose. The previous dose lives
+  inside `h_t`, so the prior must learn the combination from few examples. The drug effect,
+  by contrast, depends simply on the dose level.
+
+**The lesson.** The model looks unconfounded **for the wrong reason**. It did not separate
+drug from deterioration. It under-fits the first-hour response to a start, and in this
+benchmark the whole confounder lives in exactly that response. A model that fitted the data
+better would be biased by up to −15 mmHg, as the raw data and the formula agree.
+- A counterfactual that comes out right is not evidence that the model understood the cause.
+- A benchmark has to check the *mechanism*: what the model predicts one step after a start,
+  and whether that matches the data.
+- The more powerful and better-fitted the world model, the more it will reproduce hidden
+  confounding like this. Stage 11's act_now path already moved hour-1 recovery from 54% to
+  112% at K = 100.
+
+**Read-only data check: MAP from cuff pressures.** We counted hours where neither MAP item
+(220052 arterial, 220181 cuff) has a reading but both cuff systolic (220179) and diastolic
+(220180) do.
+- Result: **6,679 of 3,557,045 valid hours (0.19%)**, or 6,984 (0.20%) if only plausible MAP
+  readings count as present.
+- Deriving MAP from systolic and diastolic would fill very few hours. The extraction is
+  unchanged.
+
 ---
 
 ## Stage 8 - What we learned

@@ -1,5 +1,8 @@
 # ICU world model (learning project)
 
+Start with [docs/JOURNEY.md](docs/JOURNEY.md) for the map of all stages, then
+[LEARNING.md](LEARNING.md) for the full explanations.
+
 An action-conditioned transformer world model (TSSM-style), trained on
 simulated ICU patients. The goal is to understand how world models work,
 especially whether they learn the *effect* of treatments, not just their
@@ -22,6 +25,7 @@ icu-world-model/
     kaggle_mimic.ipynb  Stage 7: extraction + training on the full MIMIC-IV tables
   outputs/         generated data and checkpoints (local only); figures/ is versioned
   LEARNING.md      what each stage does and teaches, for a first-time reader
+  docs/JOURNEY.md  the map: stage-by-stage question, hypothesis, result, lesson (Stages 1-12b)
   requirements.txt pinned package versions
 ```
 
