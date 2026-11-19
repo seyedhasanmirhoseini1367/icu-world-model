@@ -2029,6 +2029,100 @@ overshot the target); the table uses its numbers as an exploratory comparison.
 
 ---
 
+## Stage 14 - A JEPA-style world model
+
+### Pre-registration (written and committed before running anything)
+
+**What changes, in plain words.** Until now the model predicted the next hour's **vitals**: the
+decoder outputs a mean and a spread for each vital, and the loss scores how well they fit the
+measured numbers (Gaussian NLL). A **JEPA** (Joint-Embedding Predictive Architecture) model
+predicts an **embedding** of the next hour instead: a 64-number summary made by an encoder. The
+loss is the distance between the predicted summary and the real one. The idea is that the model
+no longer has to spend effort on every detail of the raw numbers, only on what the encoder keeps.
+
+**The model** (new files `src/model_jepa.py`, `src/train_jepa.py`; shared code imported only).
+Identical to the current default (act_now, Stage 11) wherever possible:
+- same data, the same tokens `[x, mask, delta] + a_{t-1} + hour`, the same causal transformer
+  (d = 64, 2 layers, 4 heads) and the same act_now path for the current action `a_t`;
+- the same stochastic `z` (8 dims) with prior `p(z | h_t, a_t)`, posterior
+  `q(z | h_t, a_t, x_{t+1}, mask_{t+1})` and KL term (beta = 1, free bits 1 nat);
+- **new:** a **target encoder**, an EMA copy (exponential moving average, momentum 0.996 per
+  step) of the token layers and the transformer. It receives no gradient ("stop-gradient"). Its
+  output at hour t+1 is the target embedding `e_{t+1}`;
+- **new:** a **predictor** `[h_t, act_now(a_t), z] -> ê_{t+1}` (an MLP with 2 hidden layers);
+- **removed:** the decoder and the Gaussian NLL of the vitals.
+
+**Loss** per predicted hour:
+`0.5 × Σ_dims (ê − e)²  +  25 × variance term  +  1 × covariance term  +  beta × max(KL, 1)`.
+- The first term is the Gaussian NLL with variance 1, up to a constant. So beta = 1 keeps its
+  meaning from the VAE: one nat stored in `z` must buy one nat of prediction loss.
+- **Variance and covariance terms** (from VICReg) guard against **collapse**, the failure where
+  every hour gets the same embedding and the loss is trivially zero. The variance term pushes
+  each dimension's spread across hours to at least 1; the covariance term keeps the dimensions
+  from all saying the same thing. Both act on the online context embeddings `h_t` and on the
+  predictions.
+- Same optimizer, learning rate, batch size, patience (15) and maximum epochs as the VAE.
+
+**Collapse check:** after every epoch, the per-dimension standard deviation (across validation
+hours) of the target embeddings, the context embeddings and the predictions. It is logged to
+W&B and kept in the history.
+
+**Reading out vitals: the probe.** All benchmarks need vitals in mmHg, bpm and so on. After
+training, the JEPA model is frozen and a small **probe** is trained on top: predicted embedding
+-> mean and log-sigma of the 5 vitals (the same small network as the VAE decoder head, with a
+Gaussian output so the 10–90% band and its coverage work). It is trained exactly the way the VAE
+decoder is trained: masked Gaussian NLL of `x_{t+1}`, with `z` sampled from the posterior. In
+forecasts `z` comes from the prior, as in the VAE. The probe is then used in place of the
+decoder by the **same, unchanged evaluation code** as before.
+
+**What we train** (one Kaggle job, seed 0 unless stated): JEPA on real data (seeds 0 and 1, for
+the noise floor), on K = 10, 30 and 100 (Stage 10 data) and on 12b G = 15. The act_now models
+already trained are evaluated in the same job as the comparison: real data (seeds 0 and 1),
+K = 10 / 30 / 100 (Stage 11), K = 30 G = 0 (Stage 12) and 12b G = 15.
+
+**Benchmarks**, side by side with act_now:
+- Stage 7 one-step table (test split, real data, all 5 vitals);
+- Stage 8A imagination over 12 hours with the real actions fed (MAP and HR);
+- Stage 9 action ablation: on real data, and on K = 30 data where the drug really acts;
+- Stage 10 recovery for K = 10 / 30 / 100 against the injected effect, with the noise floor
+  (seed 1 minus seed 0, own design);
+- Stage 12b G = 15: learned vs true vs observational, and the confounding shift
+  (G = 15 minus G = 0).
+
+**The hypothesis.**
+
+> **A JEPA-style model forecasts about as well as the VAE, but responds less to actions,
+> because embedding prediction is dominated by the patient's trend.**
+
+**Verdict rules** (fixed now; computed automatically in the job):
+- **H1, forecast parity:** JEPA one-step MAP MAE (prior, test split) ≤ 1.05 × act_now's.
+- **A, Stage 9 "responds less":** on the K = 30 models, the increase in one-step MAP MAE on
+  vasopressor-active hours when the vasopressor input is set to 0 is, for JEPA, below
+  0.8 × act_now's increase.
+- **B, Stage 10 "responds less":** the K = 30 recovered share, averaged over 1, 3 and 6 h, is
+  for JEPA at least 10 percentage points below act_now's.
+- **Confirmed:** H1, A and B all hold.
+- **Rejected:** neither A nor B holds (JEPA responds as much as act_now or more), whatever H1.
+- **Partly:** anything else (for example: it responds less but also forecasts worse).
+- **Inconclusive:** the JEPA real-data or K = 30 model has collapsed (more than half of the 64
+  target-embedding dimensions with standard deviation below 0.01 at the kept epoch), or a
+  needed result is missing.
+
+**Known caveats, written down in advance:**
+- The target embedding of hour t+1 is made from the token of hour t+1. That token contains
+  `a_t` (through `act_proj`), so part of the target is the action itself. The predictor also
+  sees `a_t` and can copy that part. If the probe reads vitals partly from that direction,
+  JEPA could look *more* action-responsive than it physiologically is.
+- Early stopping uses the validation loss against a moving target (the EMA encoder changes),
+  so "best epoch" means something slightly different from the VAE.
+- One seed per model (two on real data, for the noise floor).
+- The probe is trained after the fact; a poor probe would make JEPA's forecasts look worse than
+  its embeddings are. The probe's validation NLL is reported.
+
+*Results: added after the run, below.*
+
+---
+
 ## Stage 8 - What we learned
 
 ### The main lessons
