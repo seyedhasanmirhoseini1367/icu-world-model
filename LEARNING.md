@@ -2119,7 +2119,157 @@ K = 10 / 30 / 100 (Stage 11), K = 30 G = 0 (Stage 12) and 12b G = 15.
 - The probe is trained after the fact; a poor probe would make JEPA's forecasts look worse than
   its embeddings are. The probe's validation NLL is reported.
 
-*Results: added after the run, below.*
+### Results
+
+One Kaggle job (T4 GPU, 1.9 h, all 9 steps OK). It trained 6 JEPA models plus probes and
+evaluated them side by side with the 7 act_now models already trained. W&B runs: `mimic_jepa_*`
+in project ICU-World-Model. All numbers below come from `outputs/jepa/stage14_metrics.json`;
+figures are in `outputs/jepa/figures/`.
+
+**Training and the collapse check.** No model collapsed: every one of the 64 embedding
+dimensions kept a spread of about 1 (target embeddings: smallest per-dimension std 0.97-1.00,
+median 1.05; 0 collapsed dimensions in any run). The VICReg variance term ended near 0
+(0.0001), so it was satisfied, not fighting the loss.
+
+| Run | Kept epoch / run | Val prediction loss | Val KL (nats/h) | Collapsed dims | Probe val NLL |
+|---|---|---|---|---|---|
+| real, seed 0 | 28 / 43 | 0.615 | 0.92 | 0 | 3.74 |
+| real, seed 1 | 43 / 58 | 0.620 | 0.94 | 0 | 3.80 |
+| K = 10 | 28 / 43 | 0.608 | 0.92 | 0 | 3.72 |
+| K = 30 | 18 / 33 | 0.595 | 0.93 | 0 | 3.75 |
+| K = 100 | 11 / 26 | 0.587 | 0.92 | 0 | 3.69 |
+| 12b, G = 15 | 18 / 33 | 0.596 | 0.92 | 0 | 3.74 |
+
+Two things stand out:
+- **`z` is almost unused.** The KL sits just below the 1-nat free-bits floor (0.92-0.94),
+  mostly in one of the 8 dimensions. Below the floor the KL term gives no gradient, so the model
+  stores almost nothing extra about the next hour in `z`. The act_now VAE stores 2.8 nats. You
+  see this in the one-step table: for JEPA the posterior (which may peek at the next hour) is
+  barely better than the prior (MAP 7.66 vs 7.73), while for the VAE it is much better (6.15 vs
+  7.01).
+- **The probe converged.** In its last 5 epochs the validation NLL changed by about 0.001, so a
+  longer-trained probe would not change the picture. Its NLL (3.7-3.8 nats per hour, summed
+  over the vitals) is far above the VAE decoder's reconstruction NLL (-0.44). Partly that is the
+  small `z` above, so it is not a pure forecast comparison; the MAE tables below are.
+
+**Stage 7 one-step table** (test split, 13,894 stays, real data, prior = a real forecast; MAE in
+the vital's unit; coverage of the 10-90% band, ideal 80%):
+
+| Vital | act_now MAE | JEPA MAE | Naive MAE ("same as last hour") | act_now coverage | JEPA coverage |
+|---|---|---|---|---|---|
+| HR (bpm) | **5.14** | 6.07 | 5.53 | 78% | 83% |
+| RR (/min) | **2.81** | 3.11 | 3.40 | 77% | 81% |
+| SpO2 (%) | **1.35** | 1.54 | 1.53 | 78% | 85% |
+| MAP (mmHg) | **7.01** | 7.73 | 8.33 | 78% | 82% |
+| Temp (C) | **0.265** | 0.476 | 0.300 | 79% | 87% |
+
+JEPA is worse than act_now on every vital: 10% worse on MAP, 18% on HR, and 80% on temperature.
+On HR, SpO2 and temperature it is no better than, or worse than, simply repeating the last value.
+Its bands are a little too wide (82-87% coverage instead of 80%).
+
+**Stage 8A imagination over 12 hours** (19,990 windows from hours 12 and 24, real actions fed,
+MAE):
+
+| Hours ahead | MAP act_now | MAP JEPA | MAP naive | HR act_now | HR JEPA | HR naive |
+|---|---|---|---|---|---|---|
+| 1 | **6.92** | 7.45 | 8.09 | **5.10** | 5.82 | 5.37 |
+| 3 | **7.80** | 8.22 | 9.44 | **6.70** | 7.42 | 7.19 |
+| 6 | **8.21** | 8.68 | 10.10 | **7.97** | 8.72 | 8.62 |
+| 12 | **8.96** | 9.48 | 11.05 | **9.39** | 10.30 | 10.38 |
+
+The gap stays at about 0.5 mmHg for MAP over the 12 hours. JEPA beats "no change" on MAP at
+every horizon, but on HR only from hour 9 on (and then barely). See `stage14_horizon.png`.
+
+**Stage 9 action ablation.** Here is how much the MAP error grows on vasopressor-active hours when
+the action input is damaged (a bigger number means the model relies more on the actions):
+
+| Data | Model | MAE with real actions | All actions 0 | Actions shuffled | Vasopressor set to 0 |
+|---|---|---|---|---|---|
+| real | act_now | 6.50 | +0.65% | +0.62% | +0.43% |
+| real | JEPA | 7.19 | +0.95% | +0.75% | -0.45% |
+| K = 30 | act_now | 6.59 | +3.33% | +3.50% | **+2.82%** |
+| K = 30 | JEPA | 7.31 | +3.75% | +3.95% | **+2.95%** |
+
+On K = 30 data, where the drug really raises MAP, both models lean on the actions by the same
+amount (2.8% vs 2.9%). JEPA does *not* respond less in this one-hour test.
+
+**Stage 10 recovery of the planted effect.** "Recovered" is the effect the model imagines
+(vasopressor 0.1 minus 0 at the same moment, 6,413 moments, mmHg). The **noise floor** is what two
+seeds of the *same* design disagree by on real data, where nothing was planted:
+
+| | Hour 1 | Hour 3 | Hour 6 |
+|---|---|---|---|
+| injected, K = 30 | 1.90 | 2.85 | 2.99 |
+| act_now recovered, K = 30 | 0.33 (18%) | 2.19 (77%) | 2.53 (85%) |
+| JEPA recovered, K = 30 | 0.97 (51%) | 1.12 (39%) | 0.94 (31%) |
+| act_now recovered, K = 100 (share) | 112% | 98% | 96% |
+| JEPA recovered, K = 100 (share) | 81% | 66% | 62% |
+| act_now recovered, K = 10 (share) | 13% | 68% | 70% |
+| JEPA recovered, K = 10 (share) | 7% | -14% | -41% |
+| noise floor act_now (mean / p90) | 0.07 / 0.19 | 0.11 / 0.30 | 0.16 / 0.40 |
+| noise floor JEPA (mean / p90) | -0.14 / 0.15 | 0.08 / 0.52 | 0.40 / 1.01 |
+
+The two models differ in the *shape* of their response over time (`stage14_recovery.png`):
+- **act_now** is slow at hour 1, then catches up to 77-85% of the true effect and stays there.
+- **JEPA** is quicker at hour 1 (51% vs 18%), but its response does not build up; it fades
+  back to about a third by hour 6.
+- **JEPA's noise floor is 2-3 times wider.** Its two real-data seeds disagree by up to 1 mmHg
+  at hour 6 (p90), against 0.4 for act_now. At K = 10, JEPA's "recovered" effect is inside its
+  own noise floor, so it is not detected at all (act_now detects it). At K = 30, hours 5-6,
+  JEPA's 0.94-0.98 mmHg is at the edge of its noise floor's p90 (0.86-1.01).
+
+**Stage 12b, G = 15 (hidden confounder):** learned vs true vs observational (mmHg):
+
+| | Hour 1 | Hour 2 | Hour 3 | Hour 6 |
+|---|---|---|---|---|
+| true causal effect | 1.90 | 2.59 | 2.85 | 2.99 |
+| observational (true + bias) | -13.10 | -9.09 | -6.25 | -1.31 |
+| act_now learned | -0.01 | 1.54 | 1.98 | 2.59 |
+| JEPA learned | 0.21 | 0.58 | 0.70 | 0.94 |
+| **confounding shift** act_now (G = 15 minus G = 0) | -0.34 | -0.37 | -0.21 | 0.06 |
+| **confounding shift** JEPA (G = 15 minus G = 0) | **-0.77** | -0.58 | -0.42 | 0.00 |
+
+Neither model comes near the observational curve. At hour 1, JEPA's estimate is pulled down
+by the confounder about twice as much as act_now's (-0.77 vs -0.34 mmHg; JEPA's 10-90% range
+-1.01 to -0.51 lies outside its noise floor). It is still a small fraction of the -15 mmHg
+hidden drop. See `stage14_confounding.png`.
+
+### Verdict (pre-registered rules)
+
+| Rule | act_now | JEPA | Holds? |
+|---|---|---|---|
+| H1: one-step MAP MAE, JEPA ≤ 1.05 × act_now | 7.01 | 7.73 (1.10 ×) | **no** |
+| A: K = 30 vasopressor-0 MAE increase, JEPA < 0.8 × act_now | 2.82% | 2.95% (1.05 ×) | **no** |
+| B: K = 30 recovered share (mean of 1, 3, 6 h), JEPA ≤ act_now - 10 points | 59.7% | 40.6% (-19 points) | **yes** |
+| Collapse (> 32 dims with std < 0.01) | - | 0 dims | no collapse |
+
+**Verdict: partly.** Of the hypothesis "forecasts about as well, but responds less to actions":
+- the **forecasting half is rejected**: JEPA is 10% worse on MAP, and worse on every vital;
+- the **"responds less" half holds in one test and not the other**:
+  - over several hours (B) JEPA recovers much less of the planted effect;
+  - in the one-hour ablation (A) it leans on the action exactly as much as act_now.
+
+### What the checks support, and the caveats
+
+The following is an **exploratory reading**, not part of the pre-registered verdict:
+- **"Dominated by the trend" fits the multi-hour pattern.** The planted effect builds up over
+  about 3 hours (tau = 1 h). JEPA predicts the next embedding, which mostly carries the
+  patient's state and trend, and its imagined effect does not accumulate. The VAE's does.
+- **The quick hour-1 response may be the known leak.** The target embedding of hour t+1
+  contains `a_t`, and the predictor sees `a_t` too (the caveat written before the run). That
+  would explain why JEPA reacts at hour 1 (in the ablation and in the 51% recovery) but not
+  later. We did not test this directly. A check would be a target encoder without the action
+  token.
+- **It fits the main finding.** The model that fits the first post-start hour more (JEPA, 51%
+  vs 18% at hour 1) also picks up more of the hidden confounding at that hour (-0.77 vs -0.34).
+- **Less stable across seeds.** JEPA's noise floor is 2-3 times act_now's, so any one JEPA
+  number needs a wider margin.
+
+Limits:
+- One seed per model (two on real data).
+- The VICReg weights (25, 1) and the EMA momentum (0.996) were not tuned.
+- `z` stayed at the free-bits floor, so JEPA here is close to a deterministic predictor. A
+  different free-bits setting could change the picture.
 
 ---
 

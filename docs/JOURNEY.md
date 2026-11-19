@@ -1,4 +1,4 @@
-# The journey: building an ICU world model, stage by stage (1-13c)
+# The journey: building an ICU world model, stage by stage (1-14)
 
 This is the short map of the project. [LEARNING.md](../LEARNING.md) has the full explanations,
 numbers and figures for every stage; this file shows how the stages connect, what each one
@@ -29,8 +29,12 @@ flowchart TD
         S13 --> S13b["13b Weight the post-start hours<br/>fit -> biased, as predicted"]
         S13b --> S13c["13c Control: lower beta, no weighting<br/>KL overshot -> inconclusive"]
     end
+    subgraph ARCH["Another architecture"]
+        S14["14 JEPA-style world model<br/>predict the next embedding:<br/>worse forecasts, fading drug response"]
+    end
     S6 --> S7
     S9 --> S10
+    S13c --> S14
 ```
 
 ## The model, with shapes
@@ -337,6 +341,33 @@ Each stage: **Question**, **Hypothesis** (what we expected before running it), *
   difference between start hours and other hours.
 - **Next:** a matched control (beta between 0.9 and 1, or a fixed KL target, matched per hour
   group); more seeds.
+
+### Stage 14 - A JEPA-style world model
+- **Question:** what if the model predicts an *embedding* of the next hour (a 64-number summary
+  made by a slowly-moving copy of its own encoder) instead of the vitals themselves?
+- **Hypothesis** (pre-registered): it forecasts about as well as the VAE but responds less to
+  actions, because embedding prediction is dominated by the patient's trend.
+- **Method:** same tokens, transformer, act_now path and `z` as the default. The decoder is
+  replaced by an EMA target encoder plus a predictor; loss = squared embedding error + VICReg
+  variance/covariance terms (against collapse) + KL. A probe reads vitals from the predicted
+  embedding, so all earlier benchmarks run through the unchanged evaluation code.
+- **Baseline:** the act_now VAE (Stage 11 default), evaluated in the same job.
+- **Result:** no collapse (all 64 dimensions keep a spread of about 1). `z` stays at the
+  free-bits floor (KL 0.92 nats vs 2.8 for the VAE).
+  - One-step MAP MAE 7.73 vs 7.01 (10% worse); worse on every vital, and on HR worse than
+    "same as last hour".
+  - K = 30 ablation: leans on the vasopressor as much as act_now (+2.95% vs +2.82%).
+  - K = 30 recovery: 51% at hour 1 (act_now 18%), but it fades to 31% by hour 6 (act_now 85%).
+    K = 10 is not detected; the noise floor is 2-3 times wider.
+  - 12b hour-1 confounding shift: -0.77 vs -0.34.
+- **Hypothesis right?** Partly. Forecasting parity: no. "Responds less": yes over several hours
+  (recovery -19 points), no in the one-hour ablation.
+- **Lesson:** predicting embeddings did not help here; it lost forecast accuracy, and its
+  imagined drug effect does not build up over hours the way the real one does. Its quick
+  hour-1 response may come from the action leaking into the target embedding (an untested
+  caveat written before the run).
+- **Next:** a target encoder without the action token; tune the free bits / VICReg weights;
+  more seeds.
 
 ## How we got from "no effect" to an answer (Stages 8-13c)
 

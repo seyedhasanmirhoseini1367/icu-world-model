@@ -1,0 +1,44 @@
+{
+  "checkpoint_epoch": 28,
+  "epochs": 43,
+  "seconds_per_epoch_median": 17.27360963821411,
+  "val_loss": 1.8114071033005825,
+  "val_pred": 0.6145784344743156,
+  "val_var": 0.00014199825866509784,
+  "val_cov": 0.19327829601618454,
+  "val_kl": 0.9156722552867707,
+  "val_kl_dims": [
+    0.8329418897628784,
+    1.4739840480615385e-05,
+    2.563985253800638e-05,
+    9.281878010369837e-05,
+    1.2847070138377603e-05,
+    0.000837700383272022,
+    0.0817144513130188,
+    3.258322976762429e-05
+  ],
+  "embedding_std": {
+    "target": {
+      "min": 0.9762307631190799,
+      "median": 1.048218844959349,
+      "n_collapsed": 0
+    },
+    "context": {
+      "min": 1.0208781835119776,
+      "median": 1.0422893667033555,
+      "n_collapsed": 0
+    },
+    "pred": {
+      "min": 1.0189037762964037,
+      "median": 1.045046824630618,
+      "n_collapsed": 0
+    }
+  },
+  "stopped_early": true,
+  "data": "real",
+  "seed": 0,
+  "model_file": "model_mimic_jepa_real.pt",
+  "probe_file": "model_mimic_jepa_real_probe.pt",
+  "probe_epochs": 40,
+  "probe_val_nll": 3.7357305443585163
+}
