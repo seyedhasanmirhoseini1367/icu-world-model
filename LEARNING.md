@@ -1802,6 +1802,194 @@ faithfully.
 
 ---
 
+## Stage 13c - Control for Stage 13b: start hours, or just the global shift?
+
+### Pre-registration (written and committed before running anything)
+
+**The question.** The Stage 13b weighting did two things at once:
+- it made the hours after a start count 10× in the loss;
+- it changed the balance between reconstruction and KL *everywhere*: validation KL went from
+  about 2.7 to 6.0–6.9 nats per hour, and the decoder's MAP sigma from about 7 mmHg to about
+  1.5.
+
+Which of the two caused the 13b bias?
+
+**The control model.** act_delta with **no start weighting**. Instead, `beta` (the KL weight
+in the loss, 1.0 so far) is lowered so that validation KL reaches about the 13b level. Free
+bits (1 nat), architecture, all other hyperparameters and seed 0 are unchanged.
+
+**Choosing beta** (fixed now, applied automatically inside the job):
+- First train on K = 30 with **beta = 0.3**.
+- If its validation KL (at the kept epoch) lies in the **target band 5.0–8.5 nats/hour**,
+  keep beta = 0.3.
+- Otherwise adjust **once**: `beta_new = 0.3 × KL_observed / 6.5`, clipped to 0.05–0.9. A
+  higher KL calls for a larger beta. Retrain K = 30 with `beta_new` and use it for every
+  other run.
+- If the KL is still outside the band after the adjustment, the control is reported as
+  **off-target** and its result as inconclusive.
+
+**Training.** K = 30 (G = 0), 12b G = 15, and real data. All use the same beta and seed 0.
+The real-data model is needed for the one-step error on real data and as the control's own
+reference.
+
+**The hypothesis.**
+
+> **The Stage 13b bias is specific to fitting the hours after a start. A control with the
+> same global KL level but no start weighting will not capture the post-start drop and will
+> stay close to the true effect under 12b G = 15.**
+
+**Measures.** The same as Stage 13b, side by side with the 13b weighted models and the
+current act_delta models:
+- the start-fit, and the share of the 12b post-start drop captured;
+- the 12b G = 15 learned effect at 1 / 3 / 6 h, against the true effect and the observational
+  prediction;
+- the **confounding shift** at hour 1 (G = 15 minus G = 0, same design, paired). For 13b it
+  was −8.47 mmHg;
+- K = 30 recovery;
+- the one-step MAP error on real data;
+- validation KL and decoder sigma, to check that the control reached the intended global
+  shift.
+
+**Verdict rules** (`S_c` = the control's hour-1 confounding shift):
+- **Confirmed (specific to start hours):** `S_c > −1.5 mmHg` (less than 10% of the predicted
+  −15, the Stage 13 level) *and* the control captures less than 50% of the post-start drop.
+- **Rejected (global shift explains it):** `S_c ≤ −4.24 mmHg`, i.e. at least half of the 13b
+  shift appears without start weighting.
+- **Partly (both contribute):** anything in between.
+- **Inconclusive:** the control is off-target (KL outside 5.0–8.5 after the one adjustment).
+
+### Results
+
+The job ran on a Kaggle T4 in 1.4 hours; all 8 steps succeeded. W&B runs: `i818p6ey`
+(beta 0.3, K = 30), `56o3p06s` (beta 0.9, K = 30), `s5pogywp` (beta 0.9, 12b G = 15),
+`yyx8ej0v` (beta 0.9, real data). Files: `outputs/kaggle_stage13c/` (not in git);
+checkpoints in the release `v1.2-vae-stage13c`.
+
+#### 1. Did the control reach the target KL? No.
+
+| Beta | Data | Validation KL (nats/hour) | In band 5.0–8.5? |
+|---|---|---|---|
+| 0.3 (first try) | K = 30 | 19.89 | no → adjust once |
+| 0.9 (= 0.3 × 19.89 / 6.5 = 0.92, clipped to 0.9) | K = 30 | 13.99 | no |
+| 0.9 | 12b G = 15 | 14.19 | no |
+| 0.9 | real data | 11.79 | no |
+
+The one allowed adjustment went to the top of the allowed range, and the KL was still about
+twice the 13b level. By the pre-registered rule the control is **off-target**.
+
+Where the KL and the decoder's sigma ended up, per hour group (K = 30 models, test split):
+
+| Model | KL, start hour +1 | KL, other hours | MAP sigma, start hour +1 | MAP sigma, other hours |
+|---|---|---|---|---|
+| act_delta (beta 1, Stage 13) | 2.97 | 2.68 | 8.15 mmHg | 7.14 mmHg |
+| 13b: start weight 10 (beta 1) | 18.82 | 6.68 | 0.14 mmHg | 1.50 mmHg |
+| **13c control: beta 0.9** | **14.50** | **13.96** | **0.14 mmHg** | **0.13 mmHg** |
+
+Read this table carefully, because it changes what the control can tell us:
+- 13b's shift was **not** uniform. At the start hours its KL was 19 nats and its decoder sigma
+  0.14 mmHg; elsewhere 6.7 nats and 1.5 mmHg. The "6-7 nats" we aimed for was an average
+  dominated by the ordinary hours.
+- The control is uniform: about 14 nats and 0.13 mmHg everywhere. So **at the start hours the
+  control is in nearly the same state as 13b**, and at all other hours it goes further.
+
+*Why lowering beta from 1.0 to 0.9 moved the KL from 2.7 to 14, not a little:* KL measures how
+much information `z` carries about the next hour (in nats). Storing one more nat in `z` costs
+`beta` nats of KL and saves roughly one nat of reconstruction loss. With beta above 1, storing
+is a bad deal and the model keeps `z` near the free-bits floor; with beta below 1 it pays to
+store as much as possible, until the decoder sigma hits its lower limit (at beta 0.3 it sat
+exactly at the limit, 0.10 mmHg; `LOG_SIGMA_MIN = -5` in `src/model.py`). So the KL does not
+move smoothly with beta; it jumps near beta = 1. A KL of 6-7 would need a beta between 0.9 and
+1.0, or a different tool (for example a fixed KL target). This is our explanation, consistent
+with the numbers; we did not test it separately.
+
+#### 2. Start-fit: the 12b post-start drop, and the drug part at K = 30
+
+![Start-fit, Stage 13c](outputs/figures/stage13c_start_fit.png)
+
+| Model | 12b drop captured (decoder at prior mean / mean of 50 samples) | K = 30 drug part at start hour +1 (K = 30 minus real data; measured +1.20) |
+|---|---|---|
+| act_delta | 13% / 17% | 0.08 |
+| 13b: start weight 10 | 64% / 66% | 0.97 |
+| **13c control** | **68% / 72%** | **1.95** |
+
+Without any start weighting, the control fits the hour after a start as well as 13b does.
+
+#### 3. 12b G = 15: learned vs true vs observational (mmHg, NEE 0.1 vs 0)
+
+![Learned vs true vs observational, Stage 13c](outputs/figures/stage13c_confounding.png)
+
+| | 1 h | 3 h | 6 h |
+|---|---|---|---|
+| True effect | +1.90 | +2.85 | +2.99 |
+| Observational prediction (true + bias) | −13.10 | −6.25 | −1.31 |
+| act_delta | +0.64 | +2.19 | +2.93 |
+| 13b: start weight 10 | −5.33 | −1.53 | +0.04 |
+| **13c control** | **−6.09** | **−0.22** | **+0.83** |
+
+**Confounding shift** (learned at G = 15 minus learned at G = 0, same design, paired over the
+6,413 moments; predicted full bias −15.00 / −9.10 / −4.30):
+
+| | 1 h | 3 h | 6 h |
+|---|---|---|---|
+| act_delta | −0.73 | −0.20 | +0.34 |
+| 13b | −8.47 | −4.12 | −2.28 |
+| **13c control** | **−10.73** | **−3.08** | **−1.68** |
+
+The control picks up the hidden confounding at hour 1 even more strongly than 13b (−10.7 of the
+predicted −15), and lets go of it a little faster afterwards.
+
+#### 4. K = 30 recovery (true +1.90 / +2.85 / +2.99)
+
+| Model | 1 h | 3 h | 6 h | Own reference: 1 h | 3 h | 6 h |
+|---|---|---|---|---|---|---|
+| act_delta | 72% | 84% | 86% | 54% | 82% | 86% |
+| 13b | 165% | 91% | 77% | 75% | 62% | 58% |
+| **13c control** | **245%** | **100%** | **84%** | **172%** | **100%** | **93%** |
+
+("Own reference" subtracts the same design's real-data model, so only the planted drug is left.)
+The control gets the steady state right (100% at 3 h, 93% at 6 h) but overshoots hour 1 by
+a factor of about 2 even against its own reference.
+
+#### 5. One-step error on real data (test split, MAP)
+
+| Model | Prior MAE | 80% band coverage | Posterior MAE |
+|---|---|---|---|
+| current (act_now) | 7.014 | 77.6% | 6.15 |
+| act_delta | 7.019 | 78.0% | 6.42 |
+| 13b | 7.095 | 80.8% | 0.25 |
+| **13c control** | **7.046** | **79.4%** | **0.06** |
+
+The forecast (prior) is almost unchanged in every model. The posterior column shows the shift:
+in 13b and the control, the posterior has seen the next hour and `z` carries it almost exactly
+(0.06 mmHg). That is what "KL 14 nats" looks like.
+
+#### Verdict: **Inconclusive** (pre-registered rule: control off-target)
+
+The control's hour-1 shift is `S_c = −10.73 mmHg` and it captures 68% of the drop. Those numbers
+would fall under "rejected (the global shift explains it)", but the rules say an off-target
+control gives no verdict, and we keep to that.
+
+What we can still say, as an **exploratory** reading (not the verdict):
+- Start weighting is **not necessary** for the bias: a model trained with no start weighting
+  at all fits the post-start drop and picks up the hidden confounding.
+- The question as posed ("start hours or global shift?") turned out not to separate cleanly.
+  Both 13b and the control end up in the same state *at the start hours* (sharp decoder, `z`
+  carrying the next value). What they share is that the start hours get fitted closely, and
+  the bias comes with that fit, whatever causes it. This agrees with the Stage 13b lesson:
+  fitting the post-start hour is what lets the hidden confounding in.
+- A plausible mechanism (our hypothesis, not tested): once the posterior pins the next value
+  sharply, the KL term acts like a sharp regression loss that pulls the prior toward the
+  observed next value, including the confounded drop after a start.
+
+**Caveats:** one seed; the control overshot the intended KL two-fold; the hour-1 drug effect
+at K = 30 is overestimated by both sharp models, so their hour-1 numbers are less trustworthy
+than the act_delta ones.
+
+**Next:** a matched control would need a beta between 0.9 and 1.0 (or a fixed KL target) and
+should be pre-registered with the per-hour-group KL, not the average; more seeds.
+
+---
+
 ## Stage 8 - What we learned
 
 ### The main lessons
