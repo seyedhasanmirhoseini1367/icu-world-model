@@ -111,12 +111,14 @@ def find_moments(test, stats, vital="MAP", limit=MAP_LIMIT):
 
 @torch.no_grad()
 def part_b(model, test, stats, device, vital="MAP", limit=MAP_LIMIT, batch_size=128, seed=0,
-           keep_per_moment=False):
+           keep_per_moment=False, moments=None):
     """keep_per_moment=True adds '_per_moment' {(row, t): (H,) mean difference}, for pairing
-    moments across models inside a job. It is removed before anything is written out."""
+    moments across models inside a job. It is removed before anything is written out.
+    moments: a fixed [(row, t), ...] list (e.g. chosen on the real data) instead of find_moments."""
     S, H = N_SAMPLES, HORIZON_B
     j = VITALS.index(vital)
-    moments = find_moments(test, stats, vital, limit)
+    if moments is None:
+        moments = find_moments(test, stats, vital, limit)
     diffs, levels = [], {0: [], 1: []}                       # per moment: (S, H) paired differences
     by_t = {}
     for i, t in moments:
