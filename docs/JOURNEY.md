@@ -370,6 +370,25 @@ flowchart TD
     X --> O["Next: matched control (beta 0.9-1 or KL target), more seeds,<br/>and the real pre-start fall in MAP"]
 ```
 
+## Main finding so far (Stages 12-13c)
+
+Models that fit the hours just after a vasopressor start reproduce the hidden confounding;
+models that do not fit them look unbiased only because they underfit.
+
+| Model | Post-start drop captured | Hour-1 confounding shift (full bias −15) |
+|---|---|---|
+| act_now (12b) | ~2% | −0.34 |
+| act_delta (13) | 13% | −0.73 |
+| 13b start weighting | 64% | −8.47 |
+| 13c lower beta (0.9) | 68% | −10.73 |
+
+- Two different routes to a close fit (start weighting, lower beta) both brought in most of the
+  bias.
+- **Key sensitivity:** beta 1.0 -> 0.9 moved the validation KL from 2.7 to 14 nats per hour
+  and switched the model from underfitting to fitting the post-start hour.
+- **Limits:** one seed per model; the 13c verdict is inconclusive by its rules (KL off-target),
+  so its numbers here are exploratory.
+
 ## Glossary
 
 - **World model:** a model that predicts how a system evolves, and how it would evolve under
