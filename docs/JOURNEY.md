@@ -1,4 +1,4 @@
-# The journey: building an ICU world model, stage by stage (1-13)
+# The journey: building an ICU world model, stage by stage (1-13c)
 
 This is the short map of the project. [LEARNING.md](../LEARNING.md) has the full explanations,
 numbers and figures for every stage; this file shows how the stages connect, what each one
@@ -26,6 +26,8 @@ flowchart TD
         S11 --> S12["12 Confounder with a visible ramp"]
         S12 --> S12b["12b Confounder hidden until after the start<br/>unbiased for the wrong reason"]
         S12b --> S13["13 Let it see a start<br/>still misses the post-start drop"]
+        S13 --> S13b["13b Weight the post-start hours<br/>fit -> biased, as predicted"]
+        S13b --> S13c["13c Control: lower beta, no weighting<br/>KL overshot -> inconclusive"]
     end
     S6 --> S7
     S9 --> S10
@@ -283,7 +285,60 @@ Each stage: **Question**, **Hypothesis** (what we expected before running it), *
   loss, or check what the decoder variance does there), then rerun the 12b test; and model
   the real pre-start fall in MAP, the real-world confounder none of the models predicts.
 
-## How we got from "no effect" to an answer (Stages 8-13)
+### Stage 13b - Force the model to fit the hours after a start
+- **Question:** Why does the model miss the hour after a start, and if it is forced to fit it,
+  does hidden confounding appear?
+- **Hypothesis** (pre-registered, with a numeric gate and verdict rules): forcing the fit will
+  recover the hour-1 drug effect at K = 30 and pull the 12b G = 15 effect at least 30% of the
+  way toward the observational line.
+- **Method:** Step 1, evaluation only: predicted spread, KL and residual at start hours;
+  the start-fit with two point predictions; real starts vs Part B moments. Step 2, because
+  the gate opened: act_delta with the reconstruction of start hour +1 and +2 weighted 10x,
+  trained on K = 30, 12b G = 15 and real data.
+- **Baseline:** The current and act_delta models; the true effect; the observational
+  prediction; the noise floor.
+- **Result:** Step 1: at starts the model widens its spread (1.24-1.32x) *and* misses the
+  12b drop by 10 mmHg; the point-prediction method is not the cause; real starts (MAP 72,
+  25% restarts) differ clearly from the Part B moments (MAP 59, first-time, falling fast).
+  Step 2: 64% of the post-start drop is captured (was 13-17%); the 12b G = 15 hour-1 effect
+  becomes -5.33 mmHg (true +1.90; confounding shift -8.47 vs predicted -15). On real data the
+  model now imagines +1.86 mmHg for MAP at 1 h and nothing for temperature. One-step MAP MAE
+  +1.2%.
+- **Hypothesis right?** Confirmed by the pre-set rules. Caveats: the weighting also changed
+  the reconstruction/KL balance everywhere (KL 2.7 -> 6-7 nats), so part of the effect may be
+  that global shift; one seed; the drug's steady-state effect at K = 30 fell to 58%.
+- **Lesson:** "No bias" in a world model can just mean "did not fit that part of the data".
+  Fit it, and hidden confounding comes in. A better fit cannot remove hidden confounding;
+  it reproduces it.
+- **Next:** A control with the same global KL balance but no start weighting; multiple seeds;
+  and the real pre-start fall in MAP, which no model predicts yet.
+
+### Stage 13c - Control: start hours, or just the global KL shift?
+- **Question:** 13b changed two things: the start hours counted 10x, and the KL/reconstruction
+  balance moved everywhere (KL 2.7 -> 6-7 nats). Which one caused the bias?
+- **Hypothesis** (pre-registered): the bias is specific to fitting the start hours; a control
+  with the same global KL but no start weighting will stay close to the true effect.
+- **Method:** act_delta, no start weighting, beta lowered from 1 so the validation KL reaches
+  5.0-8.5 nats: beta 0.3 first, one pre-set adjustment. Trained on K = 30, 12b G = 15 and real
+  data.
+- **Baseline:** act_delta and the 13b models; the true effect; the observational prediction.
+- **Result:** KL jumped instead of moving smoothly: beta 0.3 -> 19.9 nats, beta 0.9 (the
+  adjustment, at its upper limit) -> 14.0, still twice the target. At the start hours the
+  control is in nearly the same state as 13b (KL 14.5 vs 18.8, MAP sigma 0.14 mmHg in both);
+  elsewhere it goes further. It captures 68% of the post-start drop and its 12b hour-1
+  confounding shift is -10.73 mmHg (13b: -8.47). K = 30: hour 1 overshot (245%), 3-6 h right.
+  One-step MAP MAE 7.046 (current 7.014).
+- **Hypothesis right?** Inconclusive by the pre-set rules (control off-target). Exploratory
+  reading: start weighting is not needed for the bias; a lower beta alone also makes the model
+  fit the post-start hour, and the bias comes with that fit.
+- **Lesson:** Near beta = 1 the KL does not move smoothly: storing a nat in `z` costs beta and
+  saves about one nat of reconstruction, so below 1 the model stores almost everything. And
+  check a "global" shift per hour group before matching it: 13b's average hid a big
+  difference between start hours and other hours.
+- **Next:** a matched control (beta between 0.9 and 1, or a fixed KL target, matched per hour
+  group); more seeds.
+
+## How we got from "no effect" to an answer (Stages 8-13c)
 
 ```mermaid
 flowchart TD
@@ -307,9 +362,32 @@ flowchart TD
     N --> P{"Stage 13: let it see a start<br/>(act_now gets a_t - a_(t-1))"}
     P -- "hour after a start still missed (13%)" --> Q["Precondition not met:<br/>conditional hypothesis untested"]
     P -- "drug hour 1 at K = 30: 18% -> 54-72%;<br/>real data: MAP responds, Temp does not" --> R["Better drug path, no sign of<br/>confounding through the action"]
-    Q --> O["Next: make the post-start hour learnable on purpose,<br/>then rerun the confounding test"]
-    R --> O
+    Q --> S13b{"Stage 13b: weight the hours<br/>after a start 10x in the loss"}
+    R --> S13b
+    S13b -- "post-start drop captured 64%;<br/>12b hour-1 effect +1.9 -> -5.3" --> V["Confirmed: fit the post-start hour<br/>and hidden confounding appears"]
+    V --> W{"Stage 13c: no weighting,<br/>lower beta (KL target 5-8.5 nats)"}
+    W -- "KL 14 at beta 0.9: off-target;<br/>drop captured 68%, hour-1 shift -10.7" --> X["Inconclusive by the rules;<br/>exploratory: fitting the start hours brings the bias,<br/>whatever causes the fit"]
+    X --> O["Next: matched control (beta 0.9-1 or KL target), more seeds,<br/>and the real pre-start fall in MAP"]
 ```
+
+## Main finding so far (Stages 12-13c)
+
+Models that fit the hours just after a vasopressor start reproduce the hidden confounding;
+models that do not fit them look unbiased only because they underfit.
+
+| Model | Post-start drop captured | Hour-1 confounding shift (full bias −15) |
+|---|---|---|
+| act_now (12b) | ~2% | −0.34 |
+| act_delta (13) | 13% | −0.73 |
+| 13b start weighting | 64% | −8.47 |
+| 13c lower beta (0.9) | 68% | −10.73 |
+
+- Two different routes to a close fit (start weighting, lower beta) both brought in most of the
+  bias.
+- **Key sensitivity:** beta 1.0 -> 0.9 moved the validation KL from 2.7 to 14 nats per hour
+  and switched the model from underfitting to fitting the post-start hour.
+- **Limits:** one seed per model; the 13c verdict is inconclusive by its rules (KL off-target),
+  so its numbers here are exploratory.
 
 ## Glossary
 
