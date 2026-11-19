@@ -19,7 +19,8 @@ no x_{t+1}, so only the prior is used.
 The posterior also gets mask_{t+1}: missing vitals are stored as 0, and without
 the mask it could not tell "missing" from "exactly the mean".
 
-Stage 11 variant (act_now=True, default False): the current action a_t first goes
+Stage 11 variant (act_now=True, the default since Stage 12; act_now=False gives the
+original model, which all checkpoints before Stage 11 use): the current action a_t first goes
 through its own small network, act_now(a_t) = Linear(A, D) -> GELU -> Linear(D, D),
 and the prior and posterior get [h_t, act_now(a_t), ...] instead of the raw a_t.
 This gives the current dose a wider, learned path into z_{t+1}. Everything else,
@@ -49,7 +50,7 @@ class GaussianHead(nn.Module):
 class WorldModel(nn.Module):
 
     def __init__(self, n_vitals=2, n_actions=2, d=64, n_layers=2, n_heads=4,
-                 z_dim=8, max_hours=64, dropout=0.1, act_now=False):
+                 z_dim=8, max_hours=64, dropout=0.1, act_now=True):
         super().__init__()
         self.obs_proj = nn.Linear(3 * n_vitals, d)       # [x, mask, delta] (3V) -> D
         self.act_proj = nn.Linear(n_actions, d)          # a_{t-1} (A) -> D

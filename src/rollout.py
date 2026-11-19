@@ -22,7 +22,7 @@ import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from data import load_splits, norm_stats   # noqa: E402
-from model import WorldModel                # noqa: E402
+from model import load_world_model           # noqa: E402
 import simulator                            # noqa: E402
 
 T0 = 24            # last real hour
@@ -107,8 +107,7 @@ def run_causal_test(name, seed=0, model_file=None):
     torch.manual_seed(seed)
     stats = norm_stats()
     to_mmhg = lambda z: z * stats["std"][0] + stats["mean"][0]           # noqa: E731
-    model = WorldModel()
-    model.load_state_dict(torch.load(model_file or OUT / f"model_{name}.pt"))
+    model = load_world_model(model_file or OUT / f"model_{name}.pt", n_vitals=2, n_actions=2)
     test = load_splits(name)[0]["test"]
     sim = np.load(OUT / f"sim_{name}.npz")
 
