@@ -32,8 +32,15 @@ against "no dose". For the hour t + h the model has seen the actions of hours t 
   and the observational learned effect is true_h + bias_obs_h. This ignores what the
   history itself reveals about u (a ramp already under way lowers MAP' before t); it is
   the population-level prediction for these moments.
+
+Stage 12b, a truly hidden confounder (kind="hidden"): no ramp, and nothing at the start hour
+either, because MAP at the start hour is already in the history when a_t is chosen:
+          k(d) = exp(-(d - 1) / 4)   for d >= 1        (1 in the hour after the start)
+          k(d) = 0                   for d <= 0
+  Then the no-dose arm has u_{t+h} = 0 exactly (a start before t+h would have to be in
+  t .. t+h-1, which that arm excludes, and moments have no NEE before t), so
+        bias_obs_h = -G * exp(-(h - 1) / 4).
 """
-import math
 
 import numpy as np
 
@@ -53,30 +60,33 @@ def vaso_starts(nee):
     return (nee > 0) & (prev <= 0)
 
 
-def kernel(d):
+def kernel(d, kind="ramp"):
     """d = t - s (array of ints) -> contribution of a start at s to u_t."""
     d = np.asarray(d, dtype=float)
+    if kind == "hidden":
+        return np.where(d >= 1, np.exp(-np.clip(d - 1, 0, None) / DECAY_TAU_H), 0.0)
     ramp = np.where((d >= -RAMP_H) & (d <= 0), (d + RAMP_H) / RAMP_H, 0.0)
     decay = np.where(d > 0, np.exp(-np.clip(d, 0, None) / DECAY_TAU_H), 0.0)
     return ramp + decay
 
 
-def hidden_u(nee):
+def hidden_u(nee, kind="ramp"):
     """nee (N, T) -> u (N, T) = max over starts s of kernel(t - s)."""
     starts = vaso_starts(nee)
     N, T = nee.shape
     u = np.zeros((N, T))
     t = np.arange(T)
     for i, s in zip(*np.nonzero(starts)):
-        u[i] = np.maximum(u[i], kernel(t - s))
+        u[i] = np.maximum(u[i], kernel(t - s, kind))
     return u
 
 
-def inject_confounded(data, k=K_MMHG, g=0.0):
+def inject_confounded(data, k=K_MMHG, g=0.0, kind="ramp"):
     """Copy of an extracted dataset with MAP' = MAP + k*e - g*u on measured MAP only."""
     out = SS.inject(data, k=k, tau=SS.TAU_H)                     # adds k * e (copies the arrays)
-    u = hidden_u(out["a"][..., NEE])
+    u = hidden_u(out["a"][..., NEE], kind)
     out["x"][..., MAP] = out["x"][..., MAP] - g * u               # NaN (missing) stays NaN
+    out["confounder_kind"] = kind
     out["confounder_g"], out["confounder_ramp_h"], out["confounder_tau_h"] = g, RAMP_H, DECAY_TAU_H
     return out
 
@@ -85,13 +95,18 @@ def true_effect(dose, hours, k=K_MMHG):
     return SS.injected_effect(dose, hours, k=k, tau=SS.TAU_H)
 
 
-def no_dose_u(ds, stats, hours):
+def dose_arm_u(hours, kind="ramp"):
+    """u_{t+h} in the dose arm (a start at t, no earlier start)."""
+    return [float(kernel(h, kind)) for h in hours]
+
+
+def no_dose_u(ds, stats, hours, kind="ramp"):
     """U0_h on one split: mean u_{t+h} at Part B moments where NEE stayed 0 in t .. t+h-1.
     Also returns the dose-arm counterpart from the data (moments where NEE started at t)."""
     moments = imagine_mimic.find_moments(ds, stats)
     nee = ds.a[..., NEE].numpy()
-    u = hidden_u(nee)
-    out = dict(n_moments=len(moments), U0=[], n_U0=[], U1_data=[], n_U1=[])
+    u = hidden_u(nee, kind)
+    out = dict(kind=kind, n_moments=len(moments), U0=[], n_U0=[], U1_data=[], n_U1=[])
     for h in hours:
         no = [u[i, t + h] for i, t in moments if nee[i, t:t + h].sum() == 0]
         yes = [u[i, t + h] for i, t in moments if nee[i, t] > 0]
@@ -99,10 +114,10 @@ def no_dose_u(ds, stats, hours):
         out["n_U0"].append(len(no))
         out["U1_data"].append(float(np.mean(yes)) if yes else None)
         out["n_U1"].append(len(yes))
-    out["U1_formula"] = [math.exp(-h / DECAY_TAU_H) for h in hours]
+    out["U1_formula"] = dose_arm_u(hours, kind)
     return out
 
 
 def predicted_bias(g, u_stats):
-    """bias_obs_h = -G * (exp(-h/4) - U0_h)."""
+    """bias_obs_h = -G * (u in the dose arm - U0_h)."""
     return [-g * (u1 - (u0 or 0.0)) for u1, u0 in zip(u_stats["U1_formula"], u_stats["U0"])]
