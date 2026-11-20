@@ -2591,7 +2591,168 @@ hour of stay, and the probe NLL.
   different KL. That is why the precondition is checked again on the full run.
 - One seed per model (two on real data).
 
-*Results: added after the run, below.*
+### Results
+
+One Kaggle job (T4 GPU, 2.7 h, all 14 steps OK).
+- **Models:** 3 calibration runs, then 6 full JEPA-14c models with probes. act_now, JEPA-14 and
+  JEPA-14b were re-evaluated in the same job, and their numbers came out exactly as before
+  (MAP MAE 7.014 / 7.731 / 8.211).
+- **Where to find things:** numbers in `outputs/jepa/stage14c/stage14c_metrics.json`, figures
+  in `outputs/jepa/stage14c/figures/`, W&B runs `mimic_jepac_*`.
+
+**Step 1, calibration** (real data, seed 0, at most 30 epochs; `stage14c_calibration.png`):
+
+| beta | Validation KL (nats/h) | Hours below the 1-nat floor | Fits the rule? |
+|---|---|---|---|
+| 0.3 | 0.99 | 69% | no (KL too low) |
+| 0.1 | 1.27 | 66% | no (KL too low) |
+| **0.03** | **2.81** | **18%** | **yes**: chosen |
+
+Unlike Stage 13c, the KL rose smoothly as beta fell. It took a beta about 30 times smaller than
+the VAE's to make the model use `z` as much as the VAE does. That fits the open issue above:
+JEPA's whole prediction loss is only about 0.5-0.7 per hour, so a nat in `z` must be very cheap
+before it pays.
+
+**Step 2, full runs with beta = 0.03.** No collapse: the smallest target-embedding std was
+0.94-0.97, with 0 collapsed dimensions in every run.
+
+| Run | Kept epoch / run | Val prediction loss | Val KL (nats/h) | Hours with KL < 1 nat | Probe val NLL |
+|---|---|---|---|---|---|
+| real, seed 0 | 26 / 41 | 0.518 | 2.81 | 18% | 3.32 |
+| real, seed 1 | 29 / 44 | 0.601 | 3.42 | 10% | 3.34 |
+| K = 10 | 26 / 41 | 0.477 | 2.73 | 22% | 3.35 |
+| K = 30 | 26 / 41 | 0.533 | 2.74 | 24% | 3.44 |
+| K = 100 | 26 / 41 | 0.519 | 2.95 | 20% | 3.10 |
+| 12b, G = 15 | 30 / 45 | 0.509 | 2.98 | 13% | 3.23 |
+
+**The precondition holds:** `z` is now used.
+- The seed-0 real-data model has a mean KL of 2.81 nats per hour, and 18% of hours are below
+  the floor.
+- The KL now spreads over several of the 8 dimensions (three main ones), instead of one.
+- It is highest at the start of a stay (5.9 nats at hour 0) and stays at about 2.3 later.
+  See `stage14c_kl_hours.png`.
+
+| Model (real data) | Mean KL (nats/h) | Hours below the floor | KL at hour 0 | KL, hours 10-39 |
+|---|---|---|---|---|
+| act_now VAE | 2.79 | 9% | 2.54 | 2.81 |
+| JEPA (14), beta 1 | 0.92 | 66% | 2.28 | 0.74 |
+| JEPA-14b, beta 1 | 0.93 | 67% | 2.04 | 0.80 |
+| JEPA-14c, beta 0.03 | 2.81 | 18% | 5.91 | 2.35 |
+
+**Stage 7 one-step table** (test split, real data, prior forecast, MAE; coverage of the 10-90%
+band in brackets):
+
+| Vital | act_now | JEPA (14) | JEPA-14b | JEPA-14c | Naive |
+|---|---|---|---|---|---|
+| HR (bpm) | **5.14** (78%) | 6.07 (83%) | 6.67 (82%) | 7.05 (81%) | 5.53 |
+| RR (/min) | **2.81** (77%) | 3.11 (81%) | 3.22 (80%) | 3.37 (80%) | 3.40 |
+| SpO2 (%) | **1.35** (78%) | 1.54 (85%) | 1.63 (83%) | 1.60 (80%) | 1.53 |
+| MAP (mmHg) | **7.01** (78%) | 7.73 (82%) | 8.21 (82%) | 8.50 (81%) | 8.33 |
+| Temp (C) | **0.265** (79%) | 0.476 (87%) | 0.384 (83%) | 1.182 (88%) | 0.300 |
+
+- **Forecasts got worse again.** MAP is 21% worse than act_now, and now worse than "same as
+  last hour" (8.50 vs 8.33). Temperature is four times worse than naive.
+- **The posterior now beats the prior, as in the VAE.** The posterior forecast is MAP 7.96,
+  Temp 0.28. So `z` carries real information about the next hour.
+- **But the prior cannot supply that information.** In a forecast, `z` is drawn from the prior,
+  and the wider `z` adds noise instead. This was the caveat written in advance.
+
+**Stage 8A imagination over 12 hours** (MAE):
+
+| Hours ahead | MAP act_now | MAP 14 | MAP 14b | MAP 14c | MAP naive | HR act_now | HR 14 | HR 14b | HR 14c | HR naive |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 1 | **6.92** | 7.45 | 8.14 | 8.31 | 8.09 | **5.10** | 5.82 | 6.62 | 7.01 | 5.37 |
+| 3 | **7.80** | 8.22 | 8.68 | 9.11 | 9.44 | **6.70** | 7.42 | 8.58 | 9.02 | 7.19 |
+| 6 | **8.21** | 8.68 | 9.03 | 9.55 | 10.10 | **7.97** | 8.72 | 9.75 | 10.05 | 8.62 |
+| 12 | **8.96** | 9.48 | 9.79 | 9.99 | 11.05 | **9.39** | 10.30 | 11.26 | 11.54 | 10.38 |
+
+**Stage 9 action ablation:** how much the MAP error grows on vasopressor-active hours:
+
+| Data | Model | MAE, real actions | All actions 0 | Shuffled | Vasopressor 0 |
+|---|---|---|---|---|---|
+| real | act_now | 6.50 | +0.65% | +0.62% | +0.43% |
+| real | JEPA-14b | 7.49 | +0.20% | +0.15% | +0.10% |
+| real | JEPA-14c | 7.87 | +0.32% | +0.21% | -0.03% |
+| K = 30 | act_now | 6.59 | +3.33% | +3.50% | **+2.82%** |
+| K = 30 | JEPA (14) | 7.31 | +3.75% | +3.95% | **+2.95%** |
+| K = 30 | JEPA-14b | 7.86 | +0.53% | +0.51% | **+0.54%** |
+| K = 30 | JEPA-14c | 7.71 | +2.44% | +2.46% | **+2.70%** |
+
+With `z` used, the one-hour ablation comes back almost to act_now's level (+2.70% vs +2.82%).
+
+**Stage 10 recovery of the planted effect** (mmHg, share in brackets; `stage14c_recovery.png`):
+
+| | Hour 1 | Hour 3 | Hour 6 |
+|---|---|---|---|
+| injected, K = 30 | 1.90 | 2.85 | 2.99 |
+| act_now, K = 30 | 0.33 (18%) | 2.19 (77%) | 2.53 (85%) |
+| JEPA (14), K = 30 | 0.97 (51%) | 1.12 (39%) | 0.94 (31%) |
+| JEPA-14b, K = 30 | 0.22 (12%) | 0.33 (12%) | 0.37 (13%) |
+| JEPA-14c, K = 30 | 0.55 (29%) | 0.37 (13%) | 0.14 (5%) |
+| JEPA-14c, K = 100 (share) | 43% | 35% | 34% |
+| JEPA-14c, K = 10 (share) | 0% | -6% | -10% |
+| noise floor JEPA-14c (mean / p90) | -0.70 / -0.30 | -0.96 / -0.50 | -0.88 / -0.45 |
+| noise floor act_now (mean / p90) | 0.07 / 0.19 | 0.11 / 0.30 | 0.16 / 0.40 |
+
+- **K = 100 is recovered better than with beta 1** (34-43% vs 9-13%), but still far below
+  act_now (96-112%) and below JEPA (14) (62-81%).
+- **The noise floor is a problem.** The two real-data seeds of JEPA-14c disagree *on average* by
+  -0.7 to -0.96 mmHg, with a standard deviation of about 0.4. That is three times act_now's
+  spread and shifted off zero.
+- So at K = 30 only hour 1 is clearly positive (10th percentile above 0). From hour 2 on, the
+  K = 30 "effect" cannot be told apart from seed noise. K = 10 is not detected.
+
+**Stage 12b, G = 15** (mmHg; `stage14c_confounding.png`):
+
+| | Hour 1 | Hour 2 | Hour 3 | Hour 6 |
+|---|---|---|---|---|
+| true causal effect | 1.90 | 2.59 | 2.85 | 2.99 |
+| observational (true + bias) | -13.10 | -9.09 | -6.25 | -1.31 |
+| act_now learned | -0.01 | 1.54 | 1.98 | 2.59 |
+| JEPA-14b learned | -0.06 | -0.01 | -0.01 | -0.07 |
+| JEPA-14c learned | -0.15 | -0.32 | -0.32 | -0.18 |
+| confounding shift act_now | -0.34 | -0.37 | -0.21 | 0.06 |
+| confounding shift JEPA-14c | -0.70 | -0.81 | -0.69 | -0.31 |
+
+JEPA-14c learns no positive effect from the confounded data. Its shift of -0.3 to -0.8 is about
+the size of its own seed noise (sd about 0.4), so we do not read it as confounding.
+
+### Verdict (pre-registered rules)
+
+| Rule | act_now | JEPA-14c (beta 0.03) | Holds? |
+|---|---|---|---|
+| Calibration: a beta fits | - | 0.03 (KL 2.81, 18% below floor) | yes |
+| Precondition: full real-data run KL 1.5-4.0, < 25% below floor | - | 2.81, 18% | **yes** |
+| R2: K = 30 share (mean 1, 3, 6 h) below act_now's | 59.7% | 15.4% | **yes** |
+| R3: one-step MAP MAE above 1.05 × act_now | 7.01 | 8.50 (1.21 ×) | **yes** |
+| Collapse | - | 0 dims | no collapse |
+
+**Verdict: confirmed.** With beta tuned so `z` is used about as much as in the VAE, the
+leak-free JEPA still recovers much less of the K = 30 effect than act_now (15% vs 60%) and
+forecasts worse (MAP MAE 8.50 vs 7.01).
+
+### What the checks support, and the caveats
+
+The following is an **exploratory reading**, not part of the pre-registered verdict:
+- **beta was a real problem, but not the main one.** Using `z` brought the one-hour ablation
+  back (+2.70%) and tripled the K = 100 recovery. But it did not close the gap to the VAE. The
+  drug's multi-hour effect is still mostly missing, and forecasts got worse, not better.
+- **A used `z` helps the posterior, not the forecast.** The posterior forecasts better (MAP
+  7.96), the prior worse (8.50). The prior cannot predict what the posterior stores, so
+  sampling `z` from the prior adds noise. Temperature shows it most (prior 1.18 vs posterior
+  0.28).
+- **Less stable across seeds.** The two seeds use partly different `z` dimensions and disagree about
+  the drug effect by about 0.9 mmHg on average. The noise floor is shifted off zero, so a
+  single seed's effect estimate needs a wide margin.
+- **Across Stages 14-14c, the VAE that predicts the vitals directly stays clearly better:** it
+  forecasts better and recovers a planted drug effect much more fully.
+
+Limits:
+- One seed per model (two on real data).
+- One calibration seed, 30 epochs.
+- The VICReg weights, EMA momentum and free bits were not tuned.
+- A beta between 0.03 and 0.1 was not tried.
+- The probe was trained after the fact.
 
 ---
 

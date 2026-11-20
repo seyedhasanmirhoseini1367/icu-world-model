@@ -1,4 +1,4 @@
-# The journey: building an ICU world model, stage by stage (1-14b)
+# The journey: building an ICU world model, stage by stage (1-14c)
 
 This is the short map of the project. [LEARNING.md](../LEARNING.md) has the full explanations,
 numbers and figures for every stage; this file shows how the stages connect, what each one
@@ -32,6 +32,7 @@ flowchart TD
     subgraph ARCH["Another architecture"]
         S14["14 JEPA-style world model<br/>predict the next embedding:<br/>worse forecasts, fading drug response"]
         S14 --> S14b["14b Remove the action from the target<br/>drug response nearly gone:<br/>most of 14's response was a leak"]
+        S14b --> S14c["14c Tune beta so z is used (beta 0.03)<br/>still far below the VAE,<br/>forecasts worse"]
     end
     S6 --> S7
     S9 --> S10
@@ -396,6 +397,33 @@ Each stage: **Question**, **Hypothesis** (what we expected before running it), *
   - Check what the target can "see" before reading a response as learned.
 - **Next:** a loss that also scores the vitals (a hybrid), or a probe on richer features; more
   seeds.
+
+### Stage 14c - Tune beta so the JEPA model uses `z`
+- **Question:** in 14 and 14b, `z` was almost unused (KL below the 1-nat floor). beta = 1 was
+  chosen for the VAE's loss scale, not JEPA's. Is that why JEPA does so poorly?
+- **Hypothesis** (pre-registered): with beta tuned so `z` is used (KL about 2-3 nats/h, like the
+  VAE), the leak-free JEPA still recovers less of the K = 30 effect than act_now and forecasts
+  worse.
+- **Method:** calibration on real data with beta = 0.3 / 0.1 / 0.03 (30 epochs each), with a
+  pre-set rule: KL 1.5-4 nats/h and under 25% of hours below the floor. Then full runs with the
+  chosen beta. act_now, JEPA-14 and 14b re-evaluated in the same job.
+- **Result:**
+  - Calibration: beta 0.3 -> KL 0.99, 0.1 -> 1.27, 0.03 -> 2.81 (18% of hours below the
+    floor), so beta 0.03 was chosen. The KL rose smoothly, unlike Stage 13c.
+  - `z` is used now; the posterior forecast is better than the prior, as in the VAE.
+  - Forecasts: one-step MAP MAE 8.50, worse than act_now (7.01) and than "no change" (8.33).
+  - K = 30 ablation is back to +2.70% (act_now +2.82%), and K = 100 recovery is 34-43% (14b:
+    9-13%).
+  - K = 30 recovery: 15% (act_now 60%). Two seeds disagree by about 0.9 mmHg, so only hour 1
+    is clearly above seed noise.
+- **Hypothesis right?** Confirmed: precondition met, R2 and R3 hold.
+- **Lesson:**
+  - beta had to be about 30 times smaller for JEPA, so the beta = 1 results (14, 14b) were
+    partly a scale artefact.
+  - But fixing it did not close the gap: predicting embeddings still loses most of a drug's
+    multi-hour effect and forecasts worse than predicting the vitals.
+  - A `z` that is used helps the posterior, not the forecast.
+- **Next:** a hybrid loss that also scores the vitals; more seeds; tune the VICReg weights.
 
 ## How we got from "no effect" to an answer (Stages 8-13c)
 
