@@ -2512,6 +2512,89 @@ Limits:
 
 ---
 
+## Stage 14c - Tune beta so the JEPA model actually uses `z`
+
+### Open issue (applies to Stages 14 and 14b)
+
+beta = 1 was chosen for the VAE, where the loss is the Gaussian NLL of the vitals in nats. The
+JEPA loss is a squared error between 64-number embeddings. We wrote it as `0.5 × Σ (ê − e)²`,
+which equals a Gaussian NLL with variance 1 per dimension, so "one nat in `z` buys one nat of
+loss" holds on paper. But that variance of 1 is an arbitrary scale: the embeddings are pushed to
+a spread of about 1 by VICReg, not measured in a natural unit. So beta = 1 is not calibrated for
+the JEPA loss.
+
+In both JEPA stages the KL sat below the 1-nat free-bits floor, so `z` was almost unused.
+**The Stage 14 and 14b results hold for beta = 1 only.**
+
+### Pre-registration (written and committed before running anything)
+
+**What changes.** Only beta, the weight on the KL term. The model is JEPA-14b (target encoder
+without action input) with everything else unchanged. New files only: `src/stage14c_runner.py`.
+beta is set for the duration of each training only, the same way Stage 13c did it.
+
+**Step 1, calibration.** Train JEPA-14b on real data (seed 0) with beta = 0.3, 0.1 and 0.03, at
+most 30 epochs each, with everything else the same. At the kept epoch, measure two numbers on
+the validation split: the mean KL per predicted hour, and the share of hours whose KL is below
+the 1-nat free-bits floor.
+- A beta **fits** if its mean KL is between 1.5 and 4.0 nats per hour (the "about 2-3, like the
+  VAE" range, widened a little) and fewer than 25% of hours are below the floor.
+- Among the betas that fit, the one whose KL is closest to 2.5 nats per hour is used.
+- **If none fits, the job stops after calibration** and we report the three results.
+
+The KL can jump rather than move smoothly when beta changes (Stage 13c), which is why the range
+is fixed in advance.
+
+**Step 2, with the chosen beta:** full training (same limits as Stage 14) on real data (seeds 0
+and 1), K = 10 / 30 / 100 and 12b G = 15. The same job re-evaluates act_now, the six JEPA-14
+and the six JEPA-14b checkpoints, so all four designs are measured on the same moments.
+
+**Benchmarks**, side by side for act_now, JEPA (14), JEPA-14b and JEPA-14c, with the same
+figures as Stage 14b and the KL-per-hour figure:
+- Stage 7 one-step table;
+- Stage 8A 12-hour horizon;
+- Stage 9 ablation (real and K = 30);
+- Stage 10 recovery for K = 10 / 30 / 100 with the noise floor;
+- Stage 12b G = 15.
+
+**The hypothesis.**
+
+> **With beta tuned so `z` is used (mean KL about 2-3 nats/h, like the VAE), JEPA-14b still
+> recovers less of the K = 30 effect than act_now and forecasts worse.**
+
+**Verdict rules** (fixed now; computed automatically in the job; thresholds as in Stage 14b):
+- **Precondition, `z` used:** the 14c real-data model (seed 0) at its kept epoch has a mean KL
+  between 1.5 and 4.0 nats per hour and fewer than 25% of hours below the floor.
+- **R2, recovers less:** the K = 30 recovered share averaged over 1, 3 and 6 h is, for 14c,
+  below act_now's.
+- **R3, forecasts worse:** 14c's one-step MAP MAE (prior, test split) is above 1.05 ×
+  act_now's.
+- **Confirmed:** the precondition holds, and R2 and R3 both hold.
+- **Rejected:** the precondition holds, and neither R2 nor R3 holds.
+- **Partly:** the precondition holds, and exactly one of R2 and R3 holds.
+- **Inconclusive:** any of these:
+  - calibration found no fitting beta (the job stops);
+  - the precondition fails in the full run (`z` off-target, as in Stage 13c);
+  - the 14c real-data or K = 30 model has collapsed (more than 32 of the 64 target-embedding
+    dimensions with standard deviation below 0.01);
+  - a needed result is missing.
+
+Reported but not part of the verdict: hour-1 effect and Stage 9 ablation against JEPA-14b, KL by
+hour of stay, and the probe NLL.
+
+**Known caveats, written down in advance:**
+- With a lower beta, the validation loss used for early stopping weighs the KL less, so "best
+  epoch" again means something slightly different.
+- A `z` that carries more information comes from the posterior, which sees the real next hour.
+  In forecasts, `z` comes from the prior. Using `z` more helps the posterior fit, not
+  necessarily the forecast (the VAE showed the same gap: posterior MAP 6.15, prior 7.01).
+- Calibration uses one seed and at most 30 epochs, so the full-length run can land at a
+  different KL. That is why the precondition is checked again on the full run.
+- One seed per model (two on real data).
+
+*Results: added after the run, below.*
+
+---
+
 ## Stage 8 - What we learned
 
 ### The main lessons
