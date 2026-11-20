@@ -1,0 +1,83 @@
+{
+  "elapsed_h": 2.6639893149005043,
+  "steps": [
+    {
+      "step": "extract",
+      "status": "ok",
+      "note": "6413 moments",
+      "minutes": 4.626760729153951
+    },
+    {
+      "step": "calibrate",
+      "status": "ok",
+      "note": "chosen beta 0.03",
+      "minutes": 27.355007632573447
+    },
+    {
+      "step": "train_real_s0",
+      "status": "ok",
+      "minutes": 22.940917058785757
+    },
+    {
+      "step": "ref",
+      "status": "ok",
+      "minutes": 4.382712030410767
+    },
+    {
+      "step": "ref14",
+      "status": "ok",
+      "minutes": 6.912671383221944
+    },
+    {
+      "step": "ref14b",
+      "status": "ok",
+      "minutes": 7.011196211973826
+    },
+    {
+      "step": "train_k30",
+      "status": "ok",
+      "minutes": 17.476547221342724
+    },
+    {
+      "step": "train_h15",
+      "status": "ok",
+      "minutes": 18.97929280201594
+    },
+    {
+      "step": "train_k100",
+      "status": "ok",
+      "minutes": 17.60055717229843
+    },
+    {
+      "step": "train_k10",
+      "status": "ok",
+      "minutes": 15.7306347489357
+    },
+    {
+      "step": "train_real_s1",
+      "status": "ok",
+      "minutes": 16.7657231370608
+    },
+    {
+      "step": "final",
+      "status": "ok",
+      "minutes": 0.05724196831385295
+    }
+  ],
+  "succeeded": [
+    "extract",
+    "calibrate",
+    "train_real_s0",
+    "ref",
+    "ref14",
+    "ref14b",
+    "train_k30",
+    "train_h15",
+    "train_k100",
+    "train_k10",
+    "train_real_s1",
+    "final"
+  ],
+  "failed": [],
+  "skipped": []
+}
