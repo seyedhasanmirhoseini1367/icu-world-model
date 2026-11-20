@@ -1,0 +1,119 @@
+{
+  "elapsed_h": 4.987829919921027,
+  "steps": [
+    {
+      "step": "extract",
+      "status": "ok",
+      "note": "6413 moments",
+      "minutes": 4.261511143048605
+    },
+    {
+      "step": "ref",
+      "status": "ok",
+      "note": "measured hour-1 change: K = 30 +2.67, 12b -11.71 mmHg",
+      "minutes": 1.5870837370554607
+    },
+    {
+      "step": "run_b0p90_s0",
+      "status": "ok",
+      "minutes": 15.73445219596227
+    },
+    {
+      "step": "run_b1p00_s1",
+      "status": "ok",
+      "minutes": 40.8784472823143
+    },
+    {
+      "step": "run_b0p90_s1",
+      "status": "ok",
+      "minutes": 23.625663801034293
+    },
+    {
+      "step": "run_b1p00_s2",
+      "status": "ok",
+      "minutes": 28.772782599925996
+    },
+    {
+      "step": "run_b0p90_s2",
+      "status": "ok",
+      "minutes": 11.341295142968496
+    },
+    {
+      "step": "run_b0p95_s0",
+      "status": "ok",
+      "minutes": 14.891761835416158
+    },
+    {
+      "step": "run_b0p95_s1",
+      "status": "ok",
+      "minutes": 23.52123922109604
+    },
+    {
+      "step": "run_b0p95_s2",
+      "status": "ok",
+      "minutes": 24.05457150141398
+    },
+    {
+      "step": "run_b0p97_s0",
+      "status": "ok",
+      "minutes": 16.8344490925471
+    },
+    {
+      "step": "run_b0p97_s1",
+      "status": "ok",
+      "minutes": 22.162620377540588
+    },
+    {
+      "step": "run_b0p97_s2",
+      "status": "ok",
+      "minutes": 19.101343786716463
+    },
+    {
+      "step": "run_b0p92_s0",
+      "status": "ok",
+      "minutes": 14.311689003308613
+    },
+    {
+      "step": "run_b0p92_s1",
+      "status": "ok",
+      "minutes": 21.883497297763824
+    },
+    {
+      "step": "run_b0p92_s2",
+      "status": "ok",
+      "minutes": 12.922947875658672
+    },
+    {
+      "step": "ref_earlier",
+      "status": "ok",
+      "minutes": 3.3690906008084616
+    },
+    {
+      "step": "final",
+      "status": "ok",
+      "minutes": 0.015186107158660889
+    }
+  ],
+  "succeeded": [
+    "extract",
+    "ref",
+    "run_b0p90_s0",
+    "run_b1p00_s1",
+    "run_b0p90_s1",
+    "run_b1p00_s2",
+    "run_b0p90_s2",
+    "run_b0p95_s0",
+    "run_b0p95_s1",
+    "run_b0p95_s2",
+    "run_b0p97_s0",
+    "run_b0p97_s1",
+    "run_b0p97_s2",
+    "run_b0p92_s0",
+    "run_b0p92_s1",
+    "run_b0p92_s2",
+    "ref_earlier",
+    "final"
+  ],
+  "failed": [],
+  "skipped": []
+}

@@ -1,0 +1,8 @@
+{
+  "n_stays": 93224,
+  "n_moments": 6413,
+  "clipped": {
+    "clipped_nee_hours": 363,
+    "clipped_fluid_hours": 108
+  }
+}

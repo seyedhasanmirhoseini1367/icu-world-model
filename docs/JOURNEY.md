@@ -1,11 +1,11 @@
-# The journey: building an ICU world model, stage by stage (1-14c)
+# The journey: building an ICU world model, stage by stage (1-15)
 
 This is the short map of the project. [LEARNING.md](../LEARNING.md) has the full explanations,
 numbers and figures for every stage; this file shows how the stages connect, what each one
 asked, and what we concluded. Numbers are in mmHg of mean arterial pressure (MAP) unless
 stated otherwise.
 
-## Conclusions (Stages 1-14c)
+## Conclusions (Stages 1-15)
 
 All numbers below are taken from [LEARNING.md](../LEARNING.md). They come from MIMIC-IV
 (93,224 ICU stays), except Stage 6, which used the simulator.
@@ -41,6 +41,12 @@ Models that fit the post-treatment hours reproduce the hidden confounding. Two d
 routes to that fit both brought in most of the bias. Better fit to observational data cannot
 remove hidden confounding; it copies it.
 
+Stage 15 repeated this with 15 runs of the default model (5 values of beta × 3 seeds):
+- The 5 runs that fit the post-start hour all have a lower, more biased hour-1 effect than the
+  10 that do not (Spearman −0.60, pre-registered threshold −0.6).
+- With the default model the bias is smaller than with act_delta (13b, 13c): about 0.4-1.3
+  mmHg, against 6-7 mmHg.
+
 **VAE vs JEPA, in three steps.** JEPA predicts an embedding of the next hour instead of the
 vitals. A probe then reads the vitals out of that embedding.
 1. **Stage 14:** MAP MAE 7.73 vs 7.01 for the VAE. JEPA's K = 30 response is quick at hour 1
@@ -56,18 +62,23 @@ At every step, predicting embeddings lost forecast accuracy and most of the mult
 effect. The VAE stays clearly better.
 
 **Key sensitivities.**
-- **beta:** for the VAE, 1.0 -> 0.9 moved the KL from 2.7 to 14 nats per hour and switched
-  the model from underfitting to fitting the post-start hour, and so to biased. JEPA needed
-  beta = 0.03 before it used `z`, so its beta = 1 results hold for beta = 1 only.
-- **Seeds:** there is one seed per model, plus a second seed on real data for the noise floor.
-  JEPA's noise floor was 2-3 times the VAE's (Stage 14), and shifted by -0.7 to -0.96 mmHg
-  in Stage 14c.
+- **beta:** for the VAE, lowering beta from 1.0 to 0.9 raises the KL about 4 times
+  (2.9 -> 12.7 nats per hour, mean of 3 seeds; Stage 15). It is a steady climb, not one sharp
+  jump. JEPA needed beta = 0.03 before it used `z`, so its beta = 1 results hold for beta = 1
+  only.
+- **Seeds:** whether a run fits the post-start hour, and so becomes biased, depends on the
+  seed as well as on beta. At beta 0.9, 2 of 3 seeds fit; at 0.95, 1 of 3 (Stage 15). A
+  single run cannot show whether a setting is biased. Stages before 15 used one seed per
+  model. JEPA's noise floor was 2-3 times the VAE's (Stage 14), and shifted by -0.7 to
+  -0.96 mmHg in Stage 14c.
+- **The forecast metric is blind to the bias:** all 15 Stage 15 runs have the same one-step
+  MAP error to within 0.08 mmHg.
 
 **Open questions.** (The full list is at the end of this file.)
 - How large is hidden confounding in real ICU data, and can proxies make it visible?
 - Can a model fit post-treatment dynamics without absorbing the confounding?
 - Would a hybrid loss (embedding plus vitals) keep JEPA's ideas without losing the effect?
-- Do the main results hold over more seeds, and with a matched control for 13c?
+- What decides, at the same beta, whether a seed learns to fit the post-start hour?
 
 ```mermaid
 flowchart TD
@@ -76,12 +87,12 @@ flowchart TD
     Q -- "planted effect K = 30 / 100<br/>recovered 77-112%" --> D["The model can learn effects:<br/>mainly a data problem"]
     D --> H{"Hidden confounder (bias -15)"}
     H -- "underfit post-start hours<br/>shift -0.34" --> U["Looks unbiased<br/>for the wrong reason"]
-    H -- "fit post-start hours (13b, 13c)<br/>shift -8.5 to -10.7" --> B["Reproduces the bias"]
+    H -- "fit post-start hours (13b, 13c)<br/>shift -8.5 to -10.7" --> B["Reproduces the bias<br/>(15 runs: all 5 that fit are biased)"]
     D --> J{"Predict embeddings instead (JEPA)?"}
     J -- "14: quick hour-1 response" --> L["14b: it was an action leak<br/>recovery 12%"]
     L --> Z["14c: beta 0.03, z used<br/>recovery 15%, MAP 8.50"]
     Z --> V["VAE stays better at forecasting<br/>and at recovering effects"]
-    U --> S["Sensitive to beta; one seed per model"]
+    U --> S["Fit, and so bias, depends on beta and on the seed (Stage 15)<br/>forecast error cannot tell them apart"]
     B --> S
 ```
 
@@ -108,6 +119,7 @@ flowchart TD
         S12b --> S13["13 Let it see a start<br/>still misses the post-start drop"]
         S13 --> S13b["13b Weight the post-start hours<br/>fit -> biased, as predicted"]
         S13b --> S13c["13c Control: lower beta, no weighting<br/>KL overshot -> inconclusive"]
+        S13c --> S15["15 beta sweep x 3 seeds<br/>KL climbs steadily; fit -> bias holds,<br/>but the switch depends on the seed"]
     end
     subgraph ARCH["Another architecture"]
         S14["14 JEPA-style world model<br/>predict the next embedding:<br/>worse forecasts, fading drug response"]
@@ -504,6 +516,35 @@ Each stage: **Question**, **Hypothesis** (what we expected before running it), *
     multi-hour effect and forecasts worse than predicting the vitals.
   - A `z` that is used helps the posterior, not the forecast.
 - **Next:** a hybrid loss that also scores the vitals; more seeds; tune the VICReg weights.
+
+### Stage 15 - A beta sweep with three seeds
+- **Question:** is the main finding robust, or a one-seed fluke? Does the KL really jump
+  between beta 1.0 and 0.9?
+- **Hypothesis** (pre-registered):
+  - (H1) the KL jumps sharply between beta 1.0 and 0.9, consistently across seeds;
+  - (H2) runs that predict more of the post-start drop learn a more biased hour-1 effect
+    (Spearman ≤ −0.6).
+- **Method:** the default act_now model on 12b G = 15 data, beta 1.0 / 0.97 / 0.95 / 0.92 /
+  0.9 × seeds 0, 1, 2 (15 runs; the Stage 12b model reused as beta 1.0 / seed 0).
+  - Per run: KL, share of the post-start drop predicted, learned effect, one-step MAP error.
+  - The share uses the measured K = 30 change as the reference, which offsets it: runs that do
+    not fit read about 30%.
+- **Result:**
+  - The KL rises about 4× by beta 0.9 for every seed (2.9 -> 12.7 nats/h on average), but
+    steadily. The seed spread at 0.9 (4.0) is larger than the largest step (3.5).
+  - The runs split into two groups:
+    - 10 do not fit the post-start hour (share 27-33%, hour-1 effect about 0);
+    - 5 fit it (47-62%, −0.34 to −1.09).
+  - Spearman is −0.604. Which runs fit depends on the seed as well as on beta.
+  - The one-step MAP error is the same in all runs (7.05-7.13).
+- **Hypothesis right?** Partly. H1 is partly supported (4× rise, but no consistent jump). H2
+  is confirmed, just.
+- **Lesson:**
+  - Fitting the post-start hour brings in the bias in every run that does it.
+  - Whether a model fits is partly seed luck, so one run per setting is not enough to call a
+    model biased or unbiased.
+  - The default model absorbs less bias than act_delta.
+- **Next:** what makes a seed fit; more seeds near the switch; a fixed-KL control.
 
 ## How we got from "no effect" to an answer (Stages 8-13c)
 

@@ -13,3 +13,12 @@ outputs/jepa/**
 !outputs/jepa/**/*.json
 !outputs/jepa/**/*.csv
 outputs/jepa/**/wandb/
+# Stage 15 results: only small files are versioned (figures, result JSON/CSV); checkpoints stay local
+# (they go to a GitHub Release)
+!outputs/stage15/
+outputs/stage15/**
+!outputs/stage15/**/
+!outputs/stage15/**/*.png
+!outputs/stage15/**/*.json
+!outputs/stage15/**/*.csv
+outputs/stage15/**/wandb/
