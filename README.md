@@ -25,7 +25,7 @@ icu-world-model/
     kaggle_mimic.ipynb  Stage 7: extraction + training on the full MIMIC-IV tables
   outputs/         generated data and checkpoints (local only); figures/ is versioned
   LEARNING.md      what each stage does and teaches, for a first-time reader
-  docs/JOURNEY.md  the map: stage-by-stage question, hypothesis, result, lesson (Stages 1-14)
+  docs/JOURNEY.md  the map: stage-by-stage question, hypothesis, result, lesson (Stages 1-14b)
   requirements.txt pinned package versions
 ```
 

@@ -1,4 +1,4 @@
-# The journey: building an ICU world model, stage by stage (1-14)
+# The journey: building an ICU world model, stage by stage (1-14b)
 
 This is the short map of the project. [LEARNING.md](../LEARNING.md) has the full explanations,
 numbers and figures for every stage; this file shows how the stages connect, what each one
@@ -31,6 +31,7 @@ flowchart TD
     end
     subgraph ARCH["Another architecture"]
         S14["14 JEPA-style world model<br/>predict the next embedding:<br/>worse forecasts, fading drug response"]
+        S14 --> S14b["14b Remove the action from the target<br/>drug response nearly gone:<br/>most of 14's response was a leak"]
     end
     S6 --> S7
     S9 --> S10
@@ -368,6 +369,33 @@ Each stage: **Question**, **Hypothesis** (what we expected before running it), *
   caveat written before the run).
 - **Next:** a target encoder without the action token; tune the free bits / VICReg weights;
   more seeds.
+
+### Stage 14b - Close the action leak in the JEPA target
+- **Question:** was Stage 14's quick hour-1 drug response real, or a leak? The target embedding
+  of hour t+1 contained the action `a_t`, which the predictor also sees and could just copy.
+- **Hypothesis** (pre-registered): with the leak removed, the hour-1 response drops, K = 30
+  recovery stays at or below act_now's, and forecasts stay worse than act_now's.
+- **Method:** one change: the target encoder builds its tokens with no action term. Everything
+  else as in Stage 14. KL per hour logged to check whether `z` is used. act_now, JEPA (14) and
+  JEPA-14b were all evaluated in one job (Stage 14 numbers reproduced exactly).
+- **Baseline:** act_now VAE and the Stage 14 JEPA.
+- **Result:**
+  - K = 30 hour-1 effect: 0.97 -> 0.22 mmHg. The paired drop is about 4 times the seed noise.
+  - K = 30 vasopressor ablation: +2.95% -> +0.54%.
+  - K = 30 recovery: 12-13% at every hour (act_now 77-85%). Even K = 100 is only 9-13%.
+  - Forecasts got worse: one-step MAP MAE 8.21 (act_now 7.01, JEPA-14 7.73). It is no better
+    than "no change" at hour 1.
+  - On 12b data it learns no effect at all.
+  - `z` is still unused: KL 0.93 nats per hour, below the floor in 67% of hours, the same as
+    in Stage 14.
+- **Hypothesis right?** Confirmed by all four pre-set rules.
+- **Lesson:**
+  - Most of Stage 14's action response was the leak.
+  - A leak-free JEPA that predicts embeddings is almost blind to a drug effect that the VAE
+    recovers almost fully: the effect is a small part of the embedding it predicts.
+  - Check what the target can "see" before reading a response as learned.
+- **Next:** a loss that also scores the vitals (a hybrid), or a probe on richer features; more
+  seeds.
 
 ## How we got from "no effect" to an answer (Stages 8-13c)
 

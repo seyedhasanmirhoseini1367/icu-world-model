@@ -2352,7 +2352,163 @@ Stage 14 plus one KL-per-hour figure:
   loses it.
 - One seed per model (two on real data).
 
-*Results: added after the run, below.*
+### Results
+
+One Kaggle job (T4 GPU, 2.2 h, all 10 steps OK).
+- **Models:** 6 leak-fixed JEPA models with probes. The act_now models and the six Stage 14
+  JEPA checkpoints were re-evaluated in the same job.
+- **Reproducibility check:** the Stage 14 JEPA numbers came out exactly as in Stage 14 (MAP MAE
+  7.731, K = 30 hour-1 effect 0.972, ablation increase 2.948%). So the three designs are
+  compared on identical moments.
+- **Where to find things:** numbers in `outputs/jepa/stage14b/stage14b_metrics.json`, figures in
+  `outputs/jepa/stage14b/figures/`, W&B runs `mimic_jepab_*`.
+
+**Training, collapse and `z`.** No model collapsed:
+- target-embedding std was at least 0.94 in every dimension, median 0.99-1.02, and 0 collapsed
+  dimensions in every run;
+- probe validation NLL was 3.99-4.12 (Stage 14: 3.69-3.80).
+
+| Run | Kept epoch / run | Val prediction loss | Val KL (nats/h) | Hours with KL < 1 nat | Probe val NLL |
+|---|---|---|---|---|---|
+| real, seed 0 | 26 / 41 | 0.693 | 0.93 | 67% | 3.99 |
+| real, seed 1 | 29 / 44 | 0.654 | 0.94 | 68% | 4.12 |
+| K = 10 | 45 / 60 | 0.627 | 0.92 | 69% | 4.05 |
+| K = 30 | 38 / 53 | 0.720 | 0.92 | 70% | 3.99 |
+| K = 100 | 32 / 47 | 0.599 | 0.96 | 64% | 4.11 |
+| 12b, G = 15 | 26 / 41 | 0.672 | 0.94 | 68% | 3.99 |
+
+**KL per hour: `z` is still almost unused, and the leak was not the reason**
+(`stage14b_kl_hours.png`, validation split):
+
+| Model (real data) | Mean KL (nats/h) | Hours below the 1-nat floor | KL at hour 0 | KL, hours 10-39 |
+|---|---|---|---|---|
+| act_now VAE | 2.79 | 9% | 2.54 | 2.81 |
+| JEPA (14) | 0.92 | 66% | 2.28 | 0.74 |
+| JEPA-14b | 0.93 | 67% | 2.04 | 0.80 |
+
+Both JEPA models use `z` only in the first few hours of a stay, when the history is short.
+After about hour 5 they store less than the floor. The KL sits in essentially one of the 8
+dimensions. So JEPA is a near-deterministic predictor with or without the leak.
+
+**Stage 7 one-step table** (test split, real data, prior forecast, MAE; coverage of the 10-90%
+band in brackets, ideal 80%):
+
+| Vital | act_now | JEPA (14) | JEPA-14b | Naive |
+|---|---|---|---|---|
+| HR (bpm) | **5.14** (78%) | 6.07 (83%) | 6.67 (82%) | 5.53 |
+| RR (/min) | **2.81** (77%) | 3.11 (81%) | 3.22 (80%) | 3.40 |
+| SpO2 (%) | **1.35** (78%) | 1.54 (85%) | 1.63 (83%) | 1.53 |
+| MAP (mmHg) | **7.01** (78%) | 7.73 (82%) | 8.21 (82%) | 8.33 |
+| Temp (C) | **0.265** (79%) | 0.476 (87%) | 0.384 (83%) | 0.300 |
+
+Without the leak, forecasts got worse again: MAP is 17% worse than act_now (Stage 14: 10%) and
+only 1.4% better than "same as last hour". The leaked action was carrying real information
+about the next hour, and the probe was using it.
+
+**Stage 8A imagination over 12 hours** (MAE):
+
+| Hours ahead | MAP act_now | MAP JEPA (14) | MAP JEPA-14b | MAP naive | HR act_now | HR JEPA (14) | HR JEPA-14b | HR naive |
+|---|---|---|---|---|---|---|---|---|
+| 1 | **6.92** | 7.45 | 8.14 | 8.09 | **5.10** | 5.82 | 6.62 | 5.37 |
+| 3 | **7.80** | 8.22 | 8.68 | 9.44 | **6.70** | 7.42 | 8.58 | 7.19 |
+| 6 | **8.21** | 8.68 | 9.03 | 10.10 | **7.97** | 8.72 | 9.75 | 8.62 |
+| 12 | **8.96** | 9.48 | 9.79 | 11.05 | **9.39** | 10.30 | 11.26 | 10.38 |
+
+JEPA-14b is no better than "no change" for MAP at hour 1, and worse than "no change" for HR at
+every horizon.
+
+**Stage 9 action ablation:** how much the MAP error grows on vasopressor-active hours when the
+action input is damaged:
+
+| Data | Model | MAE, real actions | All actions 0 | Shuffled | Vasopressor 0 |
+|---|---|---|---|---|---|
+| real | act_now | 6.50 | +0.65% | +0.62% | +0.43% |
+| real | JEPA (14) | 7.19 | +0.95% | +0.75% | -0.45% |
+| real | JEPA-14b | 7.49 | +0.20% | +0.15% | +0.10% |
+| K = 30 | act_now | 6.59 | +3.33% | +3.50% | **+2.82%** |
+| K = 30 | JEPA (14) | 7.31 | +3.75% | +3.95% | **+2.95%** |
+| K = 30 | JEPA-14b | 7.86 | +0.53% | +0.51% | **+0.54%** |
+
+**Stage 10 recovery of the planted effect** (mmHg, share of the injected effect in brackets;
+`stage14b_recovery.png`):
+
+| | Hour 1 | Hour 3 | Hour 6 |
+|---|---|---|---|
+| injected, K = 30 | 1.90 | 2.85 | 2.99 |
+| act_now, K = 30 | 0.33 (18%) | 2.19 (77%) | 2.53 (85%) |
+| JEPA (14), K = 30 | 0.97 (51%) | 1.12 (39%) | 0.94 (31%) |
+| JEPA-14b, K = 30 | 0.22 (12%) | 0.33 (12%) | 0.37 (13%) |
+| act_now, K = 100 (share) | 112% | 98% | 96% |
+| JEPA (14), K = 100 (share) | 81% | 66% | 62% |
+| JEPA-14b, K = 100 (share) | 13% | 10% | 9% |
+| JEPA-14b, K = 10 (share) | 7% | 7% | 4% |
+| noise floor act_now (mean / p90) | 0.07 / 0.19 | 0.11 / 0.30 | 0.16 / 0.40 |
+| noise floor JEPA (14) (mean / p90) | -0.14 / 0.15 | 0.08 / 0.52 | 0.40 / 1.01 |
+| noise floor JEPA-14b (mean / p90) | -0.03 / 0.11 | -0.04 / 0.19 | -0.05 / 0.18 |
+
+- Without the leak, JEPA hardly responds to the drug at all. Even the huge K = 100 effect
+  (10 mmHg) comes out as under 1 mmHg.
+- The K = 30 response is small but steady (0.2-0.4 mmHg) and above the noise floor. The K = 10
+  response is inside the noise floor, so it is not detected.
+- **Paired check against the caveat.** At the same moments, 14b's K = 30 effect at hour 1 is
+  0.96 mmHg below JEPA-14's (10-90% range -1.22 to -0.68). That is about 4 times JEPA-14's
+  hour-1 noise-floor standard deviation (0.23). So the drop is not seed noise.
+- 14b's noise floor is the narrowest of the three, because there is little response left to
+  disagree about.
+
+**Stage 12b, G = 15:** learned vs true vs observational (mmHg; `stage14b_confounding.png`):
+
+| | Hour 1 | Hour 2 | Hour 3 | Hour 6 |
+|---|---|---|---|---|
+| true causal effect | 1.90 | 2.59 | 2.85 | 2.99 |
+| observational (true + bias) | -13.10 | -9.09 | -6.25 | -1.31 |
+| act_now learned | -0.01 | 1.54 | 1.98 | 2.59 |
+| JEPA (14) learned | 0.21 | 0.58 | 0.70 | 0.94 |
+| JEPA-14b learned | -0.06 | -0.01 | -0.01 | -0.07 |
+| confounding shift act_now | -0.34 | -0.37 | -0.21 | 0.06 |
+| confounding shift JEPA (14) | -0.77 | -0.58 | -0.42 | 0.00 |
+| confounding shift JEPA-14b | -0.28 | -0.32 | -0.35 | -0.44 |
+
+JEPA-14b learns no effect on the confounded data. Its shift (-0.3 to -0.4) is the small K = 30
+effect it had, cancelled.
+
+### Verdict (pre-registered rules)
+
+| Rule | act_now | JEPA (14) | JEPA-14b | Holds? |
+|---|---|---|---|---|
+| R1a: K = 30 hour-1 effect, 14b ≤ 0.8 × JEPA-14 | 0.33 | 0.97 | 0.22 (0.23 ×) | **yes** |
+| R1b: K = 30 vasopressor-0 increase, 14b < 0.8 × JEPA-14 | 2.82% | 2.95% | 0.54% (0.18 ×) | **yes** |
+| R2: K = 30 share (mean 1, 3, 6 h), 14b ≤ act_now | 59.7% | 40.6% | 12.0% | **yes** |
+| R3: one-step MAP MAE, 14b > 1.05 × act_now | 7.01 | 7.73 | 8.21 (1.17 ×) | **yes** |
+| Collapse | - | 0 dims | 0 dims | no collapse |
+
+**Verdict: confirmed.** With the leak removed, JEPA's hour-1 response drops (by 77% in
+recovery, and by 82% in the ablation). Its K = 30 recovery stays far below act_now's, and its
+forecasts stay worse.
+
+### What the checks support, and the caveats
+
+The following is an **exploratory reading**, not part of the pre-registered verdict:
+- **Most of Stage 14's action response was the leak.** The fast hour-1 response in Stage 14 came
+  from the action sitting inside the target embedding. Once the target no longer carries the
+  action, the remaining response is small even for a 10 mmHg effect.
+- **Stage 14's hypothesis now fits better than it did in Stage 14.** That hypothesis was that
+  embedding prediction is dominated by the patient's trend. Leak-free, the model predicts the
+  embedding of the next hour, and the drug's effect on MAP is a small part of that 64-number
+  summary. A loss on the embedding gives it little weight. The VAE, scored directly on the
+  vitals, recovers 85-96%.
+- **The leak also helped forecasts.** Removing it made MAP 6% worse (7.73 -> 8.21). The action
+  is real information about the next hour; the leak-free JEPA reads it less, so it forecasts
+  worse. Temperature is the exception: 0.476 -> 0.384, better without the leak.
+- **`z` is unused in both JEPA variants.** The KL is above the floor only in the first ~5 hours
+  of a stay, so the leak was not what kept `z` unused.
+
+Limits:
+- One seed per model (two on real data).
+- The VICReg weights, EMA momentum and free bits were not tuned.
+- The probe is small (one hidden layer) and was trained after the fact. A stronger probe might
+  read more drug effect from the embeddings. The poor recovery at K = 100 suggests the
+  information is mostly not in the predicted embedding, but we did not test that directly.
 
 ---
 

@@ -1,0 +1,70 @@
+{
+  "elapsed_h": 2.1898321400748357,
+  "steps": [
+    {
+      "step": "extract",
+      "status": "ok",
+      "note": "6413 moments",
+      "minutes": 4.4634885827700295
+    },
+    {
+      "step": "train_real_s0",
+      "status": "ok",
+      "minutes": 21.53727754751841
+    },
+    {
+      "step": "ref",
+      "status": "ok",
+      "minutes": 4.566027736663818
+    },
+    {
+      "step": "ref14",
+      "status": "ok",
+      "minutes": 7.06004767815272
+    },
+    {
+      "step": "train_k30",
+      "status": "ok",
+      "minutes": 20.159300581614175
+    },
+    {
+      "step": "train_h15",
+      "status": "ok",
+      "minutes": 17.094826662540434
+    },
+    {
+      "step": "train_k100",
+      "status": "ok",
+      "minutes": 17.08373668988546
+    },
+    {
+      "step": "train_k10",
+      "status": "ok",
+      "minutes": 21.54737740755081
+    },
+    {
+      "step": "train_real_s1",
+      "status": "ok",
+      "minutes": 17.82474579811096
+    },
+    {
+      "step": "final",
+      "status": "ok",
+      "minutes": 0.05301498572031657
+    }
+  ],
+  "succeeded": [
+    "extract",
+    "train_real_s0",
+    "ref",
+    "ref14",
+    "train_k30",
+    "train_h15",
+    "train_k100",
+    "train_k10",
+    "train_real_s1",
+    "final"
+  ],
+  "failed": [],
+  "skipped": []
+}
