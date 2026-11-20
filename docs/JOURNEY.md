@@ -5,6 +5,86 @@ numbers and figures for every stage; this file shows how the stages connect, wha
 asked, and what we concluded. Numbers are in mmHg of mean arterial pressure (MAP) unless
 stated otherwise.
 
+## Conclusions (Stages 1-14c)
+
+All numbers below are taken from [LEARNING.md](../LEARNING.md). They come from MIMIC-IV
+(93,224 ICU stays), except Stage 6, which used the simulator.
+
+**What works: forecasting and calibration.**
+- The default model (act_now VAE) beats "same as last hour" on every vital: one-step MAP MAE
+  is 7.01 vs 8.33, and 8.96 vs 11.05 when imagining 12 hours ahead.
+- Its 10-90% bands contain 77-79% of the real values (ideal: 80%).
+- On real histories with a **planted** drug effect, it finds the effect. At K = 100 it
+  recovers 96-112%; at K = 30, 77-85% from hour 3. K = 30 is the smallest effect that clears
+  the seed noise at 1, 3 and 6 h.
+
+**What does not: treatment effects on real data.**
+- Imagined vasopressor effect at low MAP: +0.12 / +0.22 / +0.06 mmHg at 1 / 3 / 6 h. The sign
+  even flips between training seeds.
+- Removing the actions raises the forecast error by at most 0.5%.
+- In the simulator, seed ensembles were confidently wrong: spread 0.6-0.8 mmHg where the
+  error was 7-9 mmHg.
+- Action sequences that almost never occur in the data (positivity) cannot be learned.
+
+**The main finding: "unbiased" models were underfitting.** This was tested with a hidden
+confounder: sicker patients get the drug, and their MAP drops the hour after the start
+(bias -15 mmHg).
+
+| Model | Share of the post-start drop it fits | Hour-1 confounding shift |
+|---|---|---|
+| act_now (12b) | about 2% | -0.34 |
+| act_delta (13) | 13% | -0.73 |
+| start hours weighted 10x (13b) | 64% | -8.47 |
+| beta lowered to 0.9 (13c) | 68% | -10.73 |
+
+Models that fit the post-treatment hours reproduce the hidden confounding. Two different
+routes to that fit both brought in most of the bias. Better fit to observational data cannot
+remove hidden confounding; it copies it.
+
+**VAE vs JEPA, in three steps.** JEPA predicts an embedding of the next hour instead of the
+vitals. A probe then reads the vitals out of that embedding.
+1. **Stage 14:** MAP MAE 7.73 vs 7.01 for the VAE. JEPA's K = 30 response is quick at hour 1
+   (51%), but fades to 31% by hour 6.
+2. **Stage 14b**, after removing the action from the target embedding (a leak): the hour-1
+   effect falls from 0.97 to 0.22 mmHg, K = 30 recovery is 12%, and MAP MAE is 8.21. Most of
+   Stage 14's response was the leak.
+3. **Stage 14c**, with beta lowered to 0.03 so `z` is used (KL 2.81 nats/h, like the VAE's
+   2.79): the one-hour ablation recovers (+2.70% vs +2.82%). But K = 30 recovery is only 15%
+   (VAE 60%), and MAP MAE is 8.50.
+
+At every step, predicting embeddings lost forecast accuracy and most of the multi-hour drug
+effect. The VAE stays clearly better.
+
+**Key sensitivities.**
+- **beta:** for the VAE, 1.0 -> 0.9 moved the KL from 2.7 to 14 nats per hour and switched
+  the model from underfitting to fitting the post-start hour, and so to biased. JEPA needed
+  beta = 0.03 before it used `z`, so its beta = 1 results hold for beta = 1 only.
+- **Seeds:** there is one seed per model, plus a second seed on real data for the noise floor.
+  JEPA's noise floor was 2-3 times the VAE's (Stage 14), and shifted by -0.7 to -0.96 mmHg
+  in Stage 14c.
+
+**Open questions.** (The full list is at the end of this file.)
+- How large is hidden confounding in real ICU data, and can proxies make it visible?
+- Can a model fit post-treatment dynamics without absorbing the confounding?
+- Would a hybrid loss (embedding plus vitals) keep JEPA's ideas without losing the effect?
+- Do the main results hold over more seeds, and with a matched control for 13c?
+
+```mermaid
+flowchart TD
+    F["Forecasting works<br/>MAP MAE 7.01 vs naive 8.33, bands 77-79%"] --> R["Real-data drug effect ~ 0<br/>+0.12 / +0.22 / +0.06 mmHg"]
+    R --> Q{"Model problem or data problem?"}
+    Q -- "planted effect K = 30 / 100<br/>recovered 77-112%" --> D["The model can learn effects:<br/>mainly a data problem"]
+    D --> H{"Hidden confounder (bias -15)"}
+    H -- "underfit post-start hours<br/>shift -0.34" --> U["Looks unbiased<br/>for the wrong reason"]
+    H -- "fit post-start hours (13b, 13c)<br/>shift -8.5 to -10.7" --> B["Reproduces the bias"]
+    D --> J{"Predict embeddings instead (JEPA)?"}
+    J -- "14: quick hour-1 response" --> L["14b: it was an action leak<br/>recovery 12%"]
+    L --> Z["14c: beta 0.03, z used<br/>recovery 15%, MAP 8.50"]
+    Z --> V["VAE stays better at forecasting<br/>and at recovering effects"]
+    U --> S["Sensitive to beta; one seed per model"]
+    B --> S
+```
+
 ## Overview
 
 ```mermaid
