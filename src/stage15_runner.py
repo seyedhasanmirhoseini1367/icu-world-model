@@ -345,7 +345,7 @@ def plot_kl(res, path):
 
 
 def plot_scatter(res, path):
-    fig, ax = plt.subplots(figsize=(8, 5.5))
+    fig, ax = plt.subplots(figsize=(9, 5.8))
     cmap = plt.get_cmap("viridis")
     lo, hi = min(res["betas"]), max(res["betas"])
     markers = {0: "o", 1: "s", 2: "^"}
@@ -359,7 +359,7 @@ def plot_scatter(res, path):
         x, y = r["start_fit"].get("share_of_drop_predicted"), (r["learned"].get("mean") or [None])[0]
         if x is not None and y is not None:
             ax.scatter(100 * x, y, marker="X", s=90, color="tab:red", edgecolor="k", lw=0.5, zorder=4)
-            ax.annotate(r.get("label", k), (100 * x, y), fontsize=7, xytext=(5, 4), textcoords="offset points")
+            ax.annotate(r.get("label", k), (100 * x, y), fontsize=7, xytext=(-8, 6), textcoords="offset points", ha="right")
     ax.axhline(res["true"][0], color="k", ls="--", lw=1.5, label=f"true hour-1 effect ({res['true'][0]:+.2f})")
     ax.axhline(res["observational"][0], color="0.3", ls=":", lw=1.5,
                label=f"observational ({res['observational'][0]:+.2f})")
@@ -370,7 +370,7 @@ def plot_scatter(res, path):
     ax.scatter([], [], marker="X", color="tab:red", edgecolor="k", label="earlier designs (13, 13b, 13c)")
     rho = res["verdict"].get("h2_numbers", {}).get("spearman")
     ax.set_title("Share of the post-start drop predicted vs learned hour-1 effect"
-                 + (f" (Spearman {rho:.2f}, grid runs)" if rho is not None else ""))
+                 + (f"\nSpearman {rho:.2f} over the 15 grid runs" if rho is not None else ""), fontsize=10)
     ax.set_xlabel("share of the 12b post-start drop predicted (%)")
     ax.set_ylabel("learned hour-1 effect (mmHg)")
     ax.legend(fontsize=7, loc="lower left")

@@ -2848,7 +2848,129 @@ Also reported, not part of the verdict:
 - Spearman's correlation over 15 runs that are grouped by beta can be driven by the beta
   groups more than by variation within a group. The figure shows both.
 
-*Results: added after the run, below.*
+### Results
+
+One Kaggle job (T4 GPU, 5.0 h, all 18 steps OK).
+- **Runs:** all 15 completed; 14 were trained here, and beta 1.0 / seed 0 is the reused Stage
+  12b model.
+- **Earlier models:** the Stage 13, 13b and 13c G = 15 models were re-evaluated with the same
+  definitions.
+- **Where to find things:** numbers in `outputs/stage15/stage15_metrics.json`, the per-run table
+  in `outputs/stage15/stage15_runs.csv`, figures in `outputs/stage15/figures/`, W&B runs
+  `mimic_s15_beta*`.
+
+**Reference values** (measured at the hour after a real vasopressor start, test split):
+- the K = 30 data rises by +2.67 mmHg (drug only);
+- the 12b data falls by −11.71 mmHg (drug plus hidden confounder).
+
+So "100% of the drop" means predicting −11.71, and "0%" means predicting the drug-only +2.67.
+
+**All 15 runs** (12b data; learned effect = imagined NEE 0.1 minus 0, minus the act_now
+real-data model; true +1.90 / +2.85 / +2.99, observational −13.10 / −6.25 / −1.31):
+
+| beta | seed | Val KL (nats/h) | Hours below floor | Share of drop predicted | Learned 1 h | Learned 3 h | Learned 6 h | One-step MAP MAE |
+|---|---|---|---|---|---|---|---|---|
+| 1.0 | 0 (reused) | 3.07 | 7.7% | 30% | −0.01 | 1.98 | 2.59 | 7.088 |
+| 1.0 | 1 | 2.89 | 8.1% | 31% | +0.21 | 2.16 | 2.96 | 7.082 |
+| 1.0 | 2 | 2.70 | 9.1% | 31% | +0.13 | 2.26 | 3.14 | 7.085 |
+| 0.97 | 0 | 4.85 | 6.2% | 27% | −0.05 | 1.95 | 2.55 | 7.106 |
+| 0.97 | 1 | 6.17 | 6.0% | 31% | +0.08 | 2.13 | 2.87 | 7.093 |
+| 0.97 | 2 | 5.93 | 6.0% | 31% | +0.07 | 2.29 | 3.14 | 7.090 |
+| 0.95 | 0 | 8.28 | 5.7% | 32% | −0.02 | 2.18 | 2.98 | 7.134 |
+| 0.95 | 1 | 10.38 | 5.7% | **62%** | **−0.95** | 0.66 | 1.46 | 7.052 |
+| 0.95 | 2 | 8.68 | 5.8% | 33% | +0.01 | 2.25 | 3.04 | 7.104 |
+| 0.92 | 0 | 9.37 | 5.1% | 32% | −0.03 | 2.04 | 2.80 | 7.098 |
+| 0.92 | 1 | 10.31 | 5.4% | **55%** | **−0.87** | 0.44 | 1.09 | 7.093 |
+| 0.92 | 2 | 12.19 | 4.7% | **52%** | **−0.34** | 1.22 | 1.97 | 7.109 |
+| 0.9 | 0 | 13.80 | 4.4% | **47%** | **−1.01** | 0.44 | 1.03 | 7.124 |
+| 0.9 | 1 | 14.11 | 4.8% | **61%** | **−1.09** | 0.00 | 0.57 | 7.106 |
+| 0.9 | 2 | 10.07 | 4.9% | 29% | −0.07 | 1.95 | 2.70 | 7.125 |
+
+The **earlier designs**, measured the same way:
+
+| Model | Val KL | Share of drop predicted | Learned 1 h / 3 h / 6 h |
+|---|---|---|---|
+| 13: act_delta, beta 1 | 2.65 | 28% | +0.64 / 2.19 / 2.93 |
+| 13b: start hours weighted 10x | 5.98 | 69% | −5.33 / −1.53 / 0.04 |
+| 13c: act_delta, beta 0.9 | 14.19 | 69% | −6.09 / −0.22 / 0.83 |
+
+**H1, the KL jump** (`stage15_kl_vs_beta.png`):
+
+| beta | 1.0 | 0.97 | 0.95 | 0.92 | 0.9 |
+|---|---|---|---|---|---|
+| mean KL over seeds (nats/h) | 2.89 | 5.65 | 9.12 | 10.63 | 12.66 |
+| seed spread (max − min) | 0.36 | 1.31 | 2.10 | 2.82 | 4.04 |
+| step from the previous beta | - | +2.76 | +3.47 | +1.51 | +2.04 |
+
+- KL at beta 0.9 is 4.5, 4.9 and 3.7 times KL at beta 1.0 for seeds 0, 1 and 2. **(a) holds.**
+- But there is no single jump. The KL climbs steadily over the whole range. The largest step
+  (+3.47, from 0.97 to 0.95) is smaller than the seed spread at beta 0.9 (4.04). The largest
+  step also lies in a different place for each seed: 0.92 -> 0.9 for seed 0, 0.97 -> 0.95 for
+  seed 1, 0.95 -> 0.92 for seed 2. **(b) fails.**
+- `z` is used in every run: only 4-9% of hours are below the free-bits floor.
+
+**H2, fit vs bias** (`stage15_share_vs_effect.png`): Spearman correlation between the share
+of the drop predicted and the learned hour-1 effect, over the 15 runs: **−0.604**, against a
+threshold of −0.6. The runs fall into **two groups**, with nothing in between:
+
+| Group | Runs | Share of drop predicted | Learned hour-1 effect | Learned 3 h effect |
+|---|---|---|---|---|
+| does not fit the post-start hour | 10 | 27-33% | −0.07 to +0.21 | 1.95 to 2.29 |
+| fits it | 5 | 47-62% | −1.09 to −0.34 | 0.00 to 1.22 |
+
+- Every run that fits the post-start hour is pulled down at 1, 3 and 6 h. Every run that does
+  not fit it stays at the beta = 1 level: hour 3 at 1.95-2.29 and hour 6 at 2.55-3.14 (true
+  2.85 and 2.99). It still misses most of the drug's hour-1 effect, as act_now always has.
+- **Within each group there is no clear trend**, so the correlation comes from the split
+  between the two groups.
+- **Whether a run fits is decided by beta *and* the seed.** The number of seeds that fit is
+  0 of 3 at beta 1.0 and 0.97, 1 of 3 at 0.95 (seed 1), 2 of 3 at 0.92 (seeds 1, 2) and 2 of 3
+  at 0.9 (seeds 0, 1). Seed 2 fits at 0.92 but not at 0.9, so it is not even monotone.
+- Roughly, runs fit once their KL is above about 10 nats per hour. The two closest runs sit on
+  either side of that line: 10.07 (does not fit) and 10.31 (fits).
+- The one-step MAP MAE barely changes (7.05-7.13), so the ordinary forecast metric cannot tell
+  biased and unbiased runs apart.
+
+### Verdict (pre-registered rules)
+
+| Rule | Result | Holds? |
+|---|---|---|
+| H1a: KL(0.9) ≥ 2 × KL(1.0) for every seed | 4.5×, 4.9×, 3.7× | yes |
+| H1b: every seed spread < the largest neighbouring step | spread 4.04 at beta 0.9 vs step 3.47 | **no** |
+| H1 | the KL rises 4× by beta 0.9, but steadily, not in one consistent jump | **partly** |
+| H2: Spearman ≤ −0.6 | −0.604 | **yes** (just) |
+
+**Verdict: partly.**
+- H1 is partly supported: lowering beta from 1.0 to 0.9 multiplies the KL by about 4 for
+  every seed, but as a steady climb, not one consistent jump.
+- H2 is confirmed, only just: −0.604 against a threshold of −0.6.
+
+### What the checks support, and the caveats
+
+The following is an **exploratory reading**, not part of the pre-registered verdict:
+- **The main finding holds with three seeds, and becomes sharper.** Of the 15 runs, all 5 that
+  fit the post-start hour have a lower (more biased) learned effect than all 10 that did not.
+  Fitting comes with bias; not fitting comes with apparent unbiasedness.
+- **The switch is stochastic.** At the same beta, one seed fits and another does not. So a
+  single run cannot tell you whether a given beta gives a biased or an unbiased model. The
+  "beta 1.0 -> 0.9 switches the model" story from Stage 13c (one seed) was partly luck of the
+  seed.
+- **With the default design, the bias is smaller than with act_delta.**
+  - The fitting act_now runs move the hour-1 effect by about 0.4-1.3 mmHg below the runs
+    that do not fit.
+  - The act_delta models of 13b and 13c, which see a start directly, sit 6.0-6.7 mmHg below
+    the act_delta model of Stage 13, at a similar share (69%).
+  - So how much hidden confounding a model absorbs depends on whether it can tell a start
+    from a continued dose, not only on how well it fits.
+- **The forecast metric is blind to it.** All 15 runs have the same one-step MAP error to within
+  0.08 mmHg.
+
+Limits:
+- **The share scale is offset.** With the measured reference, models that do not fit read
+  27-33%, not about 0%. act_delta reads 28% here against 13% with Stage 13's own definition.
+  The ordering is kept, but the levels are not comparable with Stages 13-13c.
+- **H2 passed by 0.004.** It is driven by the two groups, not by a smooth relationship.
+- Three seeds per beta, and one real-data reference model.
 
 ---
 

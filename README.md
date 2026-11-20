@@ -10,7 +10,7 @@ correlation with outcomes. Two designs are compared: a VAE that predicts the vit
 
 | If you want... | Read |
 |---|---|
-| The results in one page | [docs/JOURNEY.md, "Conclusions"](docs/JOURNEY.md#conclusions-stages-1-14c) |
+| The results in one page | [docs/JOURNEY.md, "Conclusions"](docs/JOURNEY.md#conclusions-stages-1-15) |
 | How the stages connect (question, hypothesis, result, lesson) | [docs/JOURNEY.md](docs/JOURNEY.md) |
 | Full explanations, numbers, figures and pre-registrations | [LEARNING.md](LEARNING.md) |
 | Trained checkpoints | [Releases](https://github.com/seyedhasanmirhoseini1367/icu-world-model/releases) (table below) |
@@ -27,6 +27,7 @@ Each release has a `README.md` and `manifest.json` describing every file and how
 | [v2-jepa](https://github.com/seyedhasanmirhoseini1367/icu-world-model/releases/tag/v2-jepa) | Stage 14: JEPA-style models with vitals probes |
 | [v2.1-jepa](https://github.com/seyedhasanmirhoseini1367/icu-world-model/releases/tag/v2.1-jepa) | Stage 14b: JEPA with the action leak removed from the target |
 | [v2.2-jepa](https://github.com/seyedhasanmirhoseini1367/icu-world-model/releases/tag/v2.2-jepa) | Stage 14c: leak-free JEPA with beta tuned (0.03) so `z` is used |
+| [v3-beta-sweep](https://github.com/seyedhasanmirhoseini1367/icu-world-model/releases/tag/v3-beta-sweep) | Stage 15: VAE beta sweep (5 betas × 3 seeds) on the hidden-confounder data |
 
 ## Layout
 
@@ -44,13 +45,14 @@ icu-world-model/
                    Stages 8-13c: imagination, ablation, planted effects, confounding, Kaggle runners
     model_jepa*.py, train_jepa*.py, stage14*_runner.py
                    Stages 14-14c: JEPA-style model, training, Kaggle runners
+    stage15_runner.py  Stage 15: beta sweep with three seeds
   notebooks/
     causal_test.ipynb   Stage 5 results
     kaggle_mimic.ipynb  Stage 7: extraction + training on the full MIMIC-IV tables
-  outputs/         generated data and checkpoints (local only); figures/ and jepa/ (result
-                   JSON and figures for Stages 14-14c) are versioned
+  outputs/         generated data and checkpoints (local only); figures/, jepa/ and stage15/
+                   (result JSON/CSV and figures) are versioned
   LEARNING.md      what each stage does and teaches, for a first-time reader
-  docs/JOURNEY.md  the map: stage-by-stage question, hypothesis, result, lesson (Stages 1-14c)
+  docs/JOURNEY.md  the map: stage-by-stage question, hypothesis, result, lesson (Stages 1-15)
   requirements.txt pinned package versions
 ```
 
