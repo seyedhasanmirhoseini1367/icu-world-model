@@ -2756,6 +2756,102 @@ Limits:
 
 ---
 
+## Stage 15 - A beta sweep with several seeds: is the main finding robust?
+
+### Pre-registration (written and committed before running anything)
+
+**Why.** The main finding is that models which fit the hours after a vasopressor start reproduce
+the hidden confounding, while "unbiased" models were underfitting. It rests on one seed per
+model. It also rests on one surprising step: lowering beta from 1.0 to 0.9 moved the
+validation KL from about 2.7 to about 14 nats per hour (Stage 13c). If that jump is a fluke of
+one seed, the story weakens. Stage 15 repeats it with three seeds and a finer beta grid.
+
+**Setup.** Everything is as in Stage 12b, except beta and the seed:
+- the default act_now model and all other hyperparameters;
+- data: 12b G = 15 (a K = 30 drug effect plus a hidden confounder that starts the hour after
+  a start);
+- test on the same 6,413 moments.
+
+The grid is beta ∈ {1.0, 0.97, 0.95, 0.92, 0.9} × seed ∈ {0, 1, 2}, so 15 runs. beta is set
+for the duration of each training only, as in Stage 13c. New file only:
+`src/stage15_runner.py`.
+
+**Reused run:** beta 1.0, seed 0 is the existing Stage 12b G = 15 model, not retrained. Its
+setup is identical:
+- same seed, data and hyperparameters;
+- since Stage 12b, the only code change is the `act_delta` option, which is off by default and
+  leaves the act_now path unchanged.
+
+A retrain would not be bit-identical (GPU arithmetic is not exactly repeatable), so this run is
+the original, not a copy. The other 14 runs are trained in one Kaggle job. Estimate: 20-30 min
+per training plus about 5 min of evaluation, so about 7-8 h. The runs most needed for H1
+(beta 0.9 and 1.0 for every seed) are trained first.
+
+**Measured for every run** (test split of the 12b data unless stated):
+- **validation KL:** mean KL per predicted hour (nats), and the share of hours below the
+  1-nat free-bits floor. Measured at the kept checkpoint with the same code as Stage 14b.
+- **share of the post-start drop predicted (start-fit).** This is the one change from Stage 13,
+  chosen to keep the job at 15 trainings:
+  - Stage 13 compared each G = 15 model with a K = 30 model trained the same way.
+  - Here the reference is the **measured** change in the K = 30 data at the hour after a start,
+    which is what a perfect drug-only model would predict.
+  - share = (model's predicted change at start hour +1 on 12b data − measured change on K = 30
+    data) / (measured change on 12b data − measured change on K = 30 data), using the decoder
+    at the prior mean.
+  - On the Stage 13c control both definitions agree (69% vs 68%). For a model that underfits
+    the drug's own hour-1 rise, it can read a few points high.
+- **learned effect** at 1, 3 and 6 h (imagined vasopressor 0.1 vs 0, minus the act_now
+  real-data seed-0 model, as in Stage 12b), against the true effect (+1.90 / +2.85 / +2.99)
+  and the observational answer (true + bias: −13.10 / −6.25 / −1.31).
+- **one-step MAP MAE** (prior) on the 12b test split.
+
+The Stage 13 (act_delta), 13b (start weighting) and 13c (beta 0.9, act_delta) G = 15 models are
+re-evaluated in the same job with the same definitions, as extra points for the scatter plot.
+They are not part of the verdict.
+
+**The hypotheses.**
+
+> **(H1)** Validation KL jumps sharply somewhere between beta 1.0 and 0.9, and the jump is
+> consistent across seeds.
+> **(H2)** Across all runs, the learned hour-1 effect becomes more biased as the share of the
+> post-start drop the model predicts grows (negative correlation).
+
+**Verdict rules** (fixed now; computed automatically in the job):
+- **H1 confirmed** if both of the following hold.
+  - (a) For every seed, KL at beta 0.9 is at least 2 × KL at beta 1.0.
+  - (b) The seed-to-seed spread of KL (max − min over the three seeds) at every beta is
+    smaller than the change in mean KL between neighbouring betas. "Change between
+    neighbouring betas" is read as the jump: the largest change in mean KL between two
+    neighbouring grid values. So the jump must stand out above seed noise at every beta.
+
+  **H1 rejected** if (a) fails for at least one seed. **H1 partly** if (a) holds but (b) fails.
+- **H2 confirmed** if the Spearman rank correlation between "share of the post-start drop
+  predicted" and "learned hour-1 effect", over all completed grid runs, is ≤ −0.6.
+  **H2 rejected** if it is > −0.6.
+- **Overall:**
+  - **confirmed:** H1 and H2 both confirmed;
+  - **rejected:** both rejected;
+  - **partly:** anything else;
+  - **inconclusive:** a beta 1.0 or 0.9 run is missing for some seed (H1 needs all six), or
+    fewer than 10 of the 15 runs completed (H2).
+
+Also reported, not part of the verdict:
+- for each seed, where the largest KL step lies;
+- the per-run table;
+- the three figures: KL vs beta by seed; share vs learned hour-1 effect, with the 13 / 13b / 13c
+  points; learned hour-1 effect vs beta.
+
+**Known caveats, written down in advance:**
+- The share uses a measured reference (see above), so it is not exactly Stage 13's number.
+- The learned effect is measured against one real-data model (act_now, seed 0), as in Stage
+  12b. Its seed noise is part of every run's number.
+- Spearman's correlation over 15 runs that are grouped by beta can be driven by the beta
+  groups more than by variation within a group. The figure shows both.
+
+*Results: added after the run, below.*
+
+---
+
 ## Stage 8 - What we learned
 
 ### The main lessons
